@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useMemo } from 'react'
 import {
   PieChart,
   Pie,
@@ -13,7 +13,7 @@ import {
   YAxis,
   CartesianGrid,
 } from 'recharts'
-import { TrendingUp, TrendingDown, RefreshCw } from 'lucide-react'
+import { TrendingUp, TrendingDown, RefreshCw, Wallet } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import {
@@ -22,7 +22,11 @@ import {
   formatQuantity,
   formatPercent,
   getCoinName,
+  calculatePnl,
 } from '@/lib/utils'
+import { createClient, isSupabaseConfigured } from '@/lib/supabase/client'
+import { useStore } from '@/stores/useStore'
+import { useUpbit } from '@/hooks/useUpbit'
 import type { Holding } from '@/types'
 
 const COLORS = [
@@ -36,7 +40,7 @@ const COLORS = [
   '#8b5cf6',
 ]
 
-// Mock data
+// Mock data for demo mode
 const mockHoldings: Holding[] = [
   {
     id: '1',
@@ -46,10 +50,6 @@ const mockHoldings: Holding[] = [
     quantity: 0.1,
     total_invested: 9500000,
     updated_at: new Date().toISOString(),
-    current_price: 98000000,
-    current_value: 9800000,
-    unrealized_pnl: 300000,
-    unrealized_pnl_percent: 3.16,
   },
   {
     id: '2',
@@ -59,10 +59,6 @@ const mockHoldings: Holding[] = [
     quantity: 2,
     total_invested: 6600000,
     updated_at: new Date().toISOString(),
-    current_price: 3500000,
-    current_value: 7000000,
-    unrealized_pnl: 400000,
-    unrealized_pnl_percent: 6.06,
   },
   {
     id: '3',
@@ -72,10 +68,6 @@ const mockHoldings: Holding[] = [
     quantity: 10,
     total_invested: 1800000,
     updated_at: new Date().toISOString(),
-    current_price: 175000,
-    current_value: 1750000,
-    unrealized_pnl: -50000,
-    unrealized_pnl_percent: -2.78,
   },
   {
     id: '4',
@@ -85,39 +77,150 @@ const mockHoldings: Holding[] = [
     quantity: 1500,
     total_invested: 1200000,
     updated_at: new Date().toISOString(),
-    current_price: 850,
-    current_value: 1275000,
-    unrealized_pnl: 75000,
-    unrealized_pnl_percent: 6.25,
   },
 ]
 
 export default function PortfolioPage() {
-  const [holdings, setHoldings] = useState<Holding[]>(mockHoldings)
-  const [loading, setLoading] = useState(false)
+  const { holdings: storeHoldings, setHoldings } = useStore()
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState<string | null>(null)
 
-  const totalInvested = holdings.reduce((sum, h) => sum + h.total_invested, 0)
-  const totalValue = holdings.reduce((sum, h) => sum + (h.current_value || h.total_invested), 0)
+  // Get symbols from holdings for price fetching
+  const symbols = useMemo(() => {
+    const h = storeHoldings.length > 0 ? storeHoldings : mockHoldings
+    return h.map((holding) => holding.coin_symbol)
+  }, [storeHoldings])
+
+  // Fetch real-time prices from Upbit
+  const {
+    prices,
+    loading: pricesLoading,
+    refresh: refreshPrices,
+  } = useUpbit({
+    symbols,
+    realtime: true,
+  })
+
+  // Fetch holdings from Supabase
+  useEffect(() => {
+    const fetchHoldings = async () => {
+      if (!isSupabaseConfigured()) {
+        setHoldings(mockHoldings)
+        setLoading(false)
+        return
+      }
+
+      try {
+        const supabase = createClient()
+        const { data: { user } } = await supabase.auth.getUser()
+
+        if (!user) {
+          setHoldings(mockHoldings)
+          setLoading(false)
+          return
+        }
+
+        const { data, error: fetchError } = await supabase
+          .from('holdings')
+          .select('*')
+          .eq('user_id', user.id)
+          .order('total_invested', { ascending: false })
+
+        if (fetchError) throw fetchError
+
+        if (data && data.length > 0) {
+          setHoldings(data)
+        } else {
+          // No holdings yet, use empty array
+          setHoldings([])
+        }
+      } catch (err) {
+        console.error('Failed to fetch holdings:', err)
+        setError('보유 자산을 불러오는데 실패했습니다.')
+        setHoldings(mockHoldings)
+      } finally {
+        setLoading(false)
+      }
+    }
+
+    fetchHoldings()
+  }, [setHoldings])
+
+  // Calculate holdings with real-time prices
+  const holdingsWithPrices = useMemo(() => {
+    const baseHoldings = storeHoldings.length > 0 ? storeHoldings : mockHoldings
+
+    return baseHoldings.map((holding) => {
+      const currentPrice = prices[holding.coin_symbol]?.trade_price || holding.avg_price
+      const { pnl, pnlPercent } = calculatePnl(
+        currentPrice,
+        holding.avg_price,
+        holding.quantity
+      )
+      const currentValue = currentPrice * holding.quantity
+
+      return {
+        ...holding,
+        current_price: currentPrice,
+        current_value: currentValue,
+        unrealized_pnl: pnl,
+        unrealized_pnl_percent: pnlPercent,
+      }
+    })
+  }, [storeHoldings, prices])
+
+  // Calculate totals
+  const totalInvested = holdingsWithPrices.reduce((sum, h) => sum + h.total_invested, 0)
+  const totalValue = holdingsWithPrices.reduce((sum, h) => sum + (h.current_value || h.total_invested), 0)
   const totalPnl = totalValue - totalInvested
   const totalPnlPercent = totalInvested > 0 ? (totalPnl / totalInvested) * 100 : 0
 
-  const pieData = holdings.map((h, i) => ({
+  // Chart data
+  const pieData = holdingsWithPrices.map((h, i) => ({
     name: h.coin_symbol,
     value: h.current_value || h.total_invested,
     color: COLORS[i % COLORS.length],
   }))
 
-  const barData = holdings.map((h) => ({
+  const barData = holdingsWithPrices.map((h) => ({
     name: h.coin_symbol,
     pnl: h.unrealized_pnl || 0,
     pnlPercent: h.unrealized_pnl_percent || 0,
   }))
 
-  const handleRefresh = async () => {
-    setLoading(true)
-    // TODO: Fetch real-time prices from Upbit API
-    await new Promise((resolve) => setTimeout(resolve, 1000))
-    setLoading(false)
+  const handleRefresh = () => {
+    refreshPrices()
+  }
+
+  if (loading) {
+    return (
+      <div className="flex items-center justify-center py-20">
+        <RefreshCw className="h-8 w-8 animate-spin text-muted-foreground" />
+      </div>
+    )
+  }
+
+  if (holdingsWithPrices.length === 0) {
+    return (
+      <div className="space-y-6">
+        <div>
+          <h1 className="text-2xl font-bold">포트폴리오</h1>
+          <p className="text-muted-foreground">보유 자산 현황</p>
+        </div>
+        <Card>
+          <CardContent className="flex flex-col items-center justify-center py-16">
+            <Wallet className="h-16 w-16 text-muted-foreground/50" />
+            <h3 className="mt-4 text-lg font-medium">보유 자산이 없습니다</h3>
+            <p className="mt-2 text-sm text-muted-foreground">
+              매매 기록을 추가하면 자동으로 포트폴리오가 업데이트됩니다.
+            </p>
+            <Button className="mt-4" onClick={() => window.location.href = '/trades/new'}>
+              첫 거래 기록하기
+            </Button>
+          </CardContent>
+        </Card>
+      </div>
+    )
   }
 
   return (
@@ -127,9 +230,10 @@ export default function PortfolioPage() {
         <div>
           <h1 className="text-2xl font-bold">포트폴리오</h1>
           <p className="text-muted-foreground">보유 자산 현황</p>
+          {error && <p className="text-sm text-yellow-500">{error} (데모 데이터 표시 중)</p>}
         </div>
-        <Button variant="outline" onClick={handleRefresh} disabled={loading}>
-          <RefreshCw className={cn('mr-2 h-4 w-4', loading && 'animate-spin')} />
+        <Button variant="outline" onClick={handleRefresh} disabled={pricesLoading}>
+          <RefreshCw className={cn('mr-2 h-4 w-4', pricesLoading && 'animate-spin')} />
           시세 업데이트
         </Button>
       </div>
@@ -247,7 +351,7 @@ export default function PortfolioPage() {
                       border: '1px solid #262626',
                       borderRadius: '8px',
                     }}
-                    formatter={(value: number, name: string) => [
+                    formatter={(value: number) => [
                       formatKRW(value),
                       '손익',
                     ]}
@@ -291,7 +395,7 @@ export default function PortfolioPage() {
                 </tr>
               </thead>
               <tbody>
-                {holdings.map((holding, index) => (
+                {holdingsWithPrices.map((holding, index) => (
                   <tr key={holding.id} className="border-b border-border last:border-0">
                     <td className="p-4">
                       <div className="flex items-center gap-3">
@@ -338,7 +442,8 @@ export default function PortfolioPage() {
                         ) : (
                           <TrendingDown className="h-4 w-4" />
                         )}
-                        {formatKRW(Math.abs(holding.unrealized_pnl || 0))}
+                        {(holding.unrealized_pnl || 0) >= 0 ? '+' : ''}
+                        {formatKRW(holding.unrealized_pnl || 0)}
                       </div>
                     </td>
                     <td
