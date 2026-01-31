@@ -1,8 +1,8 @@
 'use client'
 
-import { useState } from 'react'
-import { useRouter } from 'next/navigation'
-import { ArrowLeft, Upload, X } from 'lucide-react'
+import { useState, useEffect } from 'react'
+import { useRouter, useParams } from 'next/navigation'
+import { ArrowLeft, Trash2 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
@@ -48,11 +48,14 @@ const EMOTIONS = [
   { value: 5, emoji: '🤩', label: '매우 좋음' },
 ]
 
-export default function NewTradePage() {
+export default function EditTradePage() {
   const router = useRouter()
+  const params = useParams()
+  const tradeId = params.id as string
   const { toast } = useToast()
-  const [loading, setLoading] = useState(false)
-  const addTrade = useStore((state) => state.addTrade)
+  const { trades, updateTrade, deleteTrade } = useStore()
+  const [loading, setLoading] = useState(true)
+  const [saving, setSaving] = useState(false)
 
   const [formData, setFormData] = useState({
     trade_type: 'BUY' as TradeType,
@@ -66,6 +69,57 @@ export default function NewTradePage() {
     emotion: 3,
     memo: '',
   })
+
+  useEffect(() => {
+    const loadTrade = async () => {
+      // 스토어에서 먼저 찾기
+      let trade = trades.find((t) => t.id === tradeId)
+
+      // 스토어에 없으면 Supabase에서 조회
+      if (!trade && isSupabaseConfigured()) {
+        try {
+          const supabase = createClient()
+          const { data } = await supabase
+            .from('trades')
+            .select('*')
+            .eq('id', tradeId)
+            .single()
+
+          if (data) {
+            trade = data as Trade
+          }
+        } catch (error) {
+          console.error('Failed to fetch trade:', error)
+        }
+      }
+
+      if (trade) {
+        setFormData({
+          trade_type: trade.trade_type,
+          coin_symbol: trade.coin_symbol,
+          quantity: trade.quantity.toString(),
+          price: trade.price.toString(),
+          fee: trade.fee.toString(),
+          exchange: trade.exchange,
+          trade_at: new Date(trade.trade_at).toISOString().slice(0, 16),
+          strategy: trade.strategy || '',
+          emotion: trade.emotion || 3,
+          memo: trade.memo || '',
+        })
+      } else {
+        toast({
+          variant: 'destructive',
+          title: '오류',
+          description: '거래 기록을 찾을 수 없습니다.',
+        })
+        router.push('/trades')
+      }
+
+      setLoading(false)
+    }
+
+    loadTrade()
+  }, [tradeId, trades, router, toast])
 
   const totalAmount = Number(formData.quantity) * Number(formData.price) || 0
   const totalWithFee = totalAmount + (Number(formData.fee) || 0)
@@ -82,7 +136,7 @@ export default function NewTradePage() {
       return
     }
 
-    setLoading(true)
+    setSaving(true)
 
     try {
       const quantity = Number(formData.quantity)
@@ -102,68 +156,82 @@ export default function NewTradePage() {
         strategy: formData.strategy || null,
         emotion: formData.emotion,
         memo: formData.memo || null,
-        screenshot_url: null,
       }
 
       if (isSupabaseConfigured()) {
         const supabase = createClient()
-        const { data: userData } = await supabase.auth.getUser()
-
-        if (!userData.user) {
-          throw new Error('로그인이 필요합니다.')
-        }
-
-        const { data, error } = await supabase
+        const { error } = await supabase
           .from('trades')
-          .insert({
-            ...tradeData,
-            user_id: userData.user.id,
-          })
-          .select()
-          .single()
+          .update(tradeData)
+          .eq('id', tradeId)
 
         if (error) throw error
-
-        addTrade(data as Trade)
-      } else {
-        // Demo mode: create local trade
-        const demoTrade: Trade = {
-          id: crypto.randomUUID(),
-          user_id: 'demo-user',
-          ...tradeData,
-          created_at: new Date().toISOString(),
-        }
-        addTrade(demoTrade)
       }
 
+      updateTrade(tradeId, tradeData)
+
       toast({
-        title: '매매 기록 완료',
-        description: `${formData.coin_symbol} ${formData.trade_type === 'BUY' ? '매수' : '매도'} 기록이 저장되었습니다.`,
+        title: '수정 완료',
+        description: '매매 기록이 수정되었습니다.',
       })
       router.push('/trades')
     } catch (error) {
-      console.error('Trade save error:', error)
+      console.error('Trade update error:', error)
       toast({
         variant: 'destructive',
         title: '오류',
-        description: error instanceof Error ? error.message : '매매 기록 저장에 실패했습니다.',
+        description: error instanceof Error ? error.message : '매매 기록 수정에 실패했습니다.',
       })
     } finally {
-      setLoading(false)
+      setSaving(false)
     }
+  }
+
+  const handleDelete = async () => {
+    if (!confirm('정말 삭제하시겠습니까?')) return
+
+    try {
+      if (isSupabaseConfigured()) {
+        const supabase = createClient()
+        const { error } = await supabase.from('trades').delete().eq('id', tradeId)
+        if (error) throw error
+      }
+      deleteTrade(tradeId)
+      toast({ title: '삭제 완료', description: '매매 기록이 삭제되었습니다.' })
+      router.push('/trades')
+    } catch (error) {
+      toast({
+        variant: 'destructive',
+        title: '삭제 실패',
+        description: '매매 기록 삭제에 실패했습니다.',
+      })
+    }
+  }
+
+  if (loading) {
+    return (
+      <div className="flex items-center justify-center py-20">
+        <p className="text-muted-foreground">불러오는 중...</p>
+      </div>
+    )
   }
 
   return (
     <div className="mx-auto max-w-2xl space-y-6">
       {/* Header */}
-      <div className="flex items-center gap-4">
-        <Button variant="ghost" size="icon" onClick={() => router.back()}>
-          <ArrowLeft className="h-5 w-5" />
-        </Button>
-        <div>
-          <h1 className="text-2xl font-bold">새 매매 기록</h1>
-          <p className="text-muted-foreground">매수 또는 매도 기록을 입력하세요</p>
+      <div className="flex items-center justify-between">
+        <div className="flex items-center gap-4">
+          <Button variant="ghost" size="icon" onClick={() => router.back()}>
+            <ArrowLeft className="h-5 w-5" />
+          </Button>
+          <div>
+            <h1 className="text-2xl font-bold">매매 기록 수정</h1>
+            <p className="text-muted-foreground">기록을 수정하거나 삭제할 수 있습니다</p>
+          </div>
         </div>
+        <Button variant="destructive" size="icon" onClick={handleDelete}>
+          <Trash2 className="h-5 w-5" />
+        </Button>
       </div>
 
       <form onSubmit={handleSubmit} className="space-y-6">
@@ -375,26 +443,6 @@ export default function NewTradePage() {
           </CardContent>
         </Card>
 
-        {/* Screenshot Upload */}
-        <Card>
-          <CardHeader>
-            <CardTitle>스크린샷</CardTitle>
-          </CardHeader>
-          <CardContent>
-            <div className="flex items-center justify-center rounded-lg border-2 border-dashed border-border p-8">
-              <div className="text-center">
-                <Upload className="mx-auto h-8 w-8 text-muted-foreground" />
-                <p className="mt-2 text-sm text-muted-foreground">
-                  차트 스크린샷을 업로드하세요
-                </p>
-                <Button variant="outline" className="mt-4" type="button">
-                  파일 선택
-                </Button>
-              </div>
-            </div>
-          </CardContent>
-        </Card>
-
         {/* Submit */}
         <div className="flex gap-4">
           <Button
@@ -405,8 +453,8 @@ export default function NewTradePage() {
           >
             취소
           </Button>
-          <Button type="submit" className="flex-1" disabled={loading}>
-            {loading ? '저장 중...' : '기록 저장'}
+          <Button type="submit" className="flex-1" disabled={saving}>
+            {saving ? '저장 중...' : '수정 저장'}
           </Button>
         </div>
       </form>

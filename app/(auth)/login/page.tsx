@@ -1,6 +1,6 @@
 'use client'
 
-import { useState } from 'react'
+import { useState, Suspense } from 'react'
 import Link from 'next/link'
 import { useRouter, useSearchParams } from 'next/navigation'
 import { Coins, Mail, Lock, Eye, EyeOff } from 'lucide-react'
@@ -12,7 +12,7 @@ import { Separator } from '@/components/ui/separator'
 import { createClient } from '@/lib/supabase/client'
 import { useToast } from '@/hooks/use-toast'
 
-export default function LoginPage() {
+function LoginForm() {
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
   const [showPassword, setShowPassword] = useState(false)
@@ -85,18 +85,17 @@ export default function LoginPage() {
   }
 
   return (
-    <div className="flex min-h-screen items-center justify-center bg-background p-4">
-      <Card className="w-full max-w-md">
-        <CardHeader className="text-center">
-          <div className="mx-auto mb-4 flex h-12 w-12 items-center justify-center rounded-xl bg-primary">
-            <Coins className="h-7 w-7 text-primary-foreground" />
-          </div>
-          <CardTitle className="text-2xl">코인노트</CardTitle>
-          <CardDescription>
-            매매일지로 수익률을 높이세요
-          </CardDescription>
-        </CardHeader>
-        <CardContent className="space-y-4">
+    <Card className="w-full max-w-md">
+      <CardHeader className="text-center">
+        <div className="mx-auto mb-4 flex h-12 w-12 items-center justify-center rounded-xl bg-primary">
+          <Coins className="h-7 w-7 text-primary-foreground" />
+        </div>
+        <CardTitle className="text-2xl">코인노트</CardTitle>
+        <CardDescription>
+          매매일지로 수익률을 높이세요
+        </CardDescription>
+      </CardHeader>
+      <CardContent className="space-y-4">
           {/* OAuth Buttons */}
           <div className="space-y-3">
             <Button
@@ -209,6 +208,25 @@ export default function LoginPage() {
           </p>
         </CardContent>
       </Card>
+  )
+}
+
+export default function LoginPage() {
+  return (
+    <div className="flex min-h-screen items-center justify-center bg-background p-4">
+      <Suspense fallback={
+        <Card className="w-full max-w-md">
+          <CardHeader className="text-center">
+            <div className="mx-auto mb-4 flex h-12 w-12 items-center justify-center rounded-xl bg-primary">
+              <Coins className="h-7 w-7 text-primary-foreground" />
+            </div>
+            <CardTitle className="text-2xl">코인노트</CardTitle>
+            <CardDescription>로딩 중...</CardDescription>
+          </CardHeader>
+        </Card>
+      }>
+        <LoginForm />
+      </Suspense>
     </div>
   )
 }

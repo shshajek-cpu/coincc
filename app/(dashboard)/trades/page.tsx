@@ -5,7 +5,6 @@ import Link from 'next/link'
 import {
   Plus,
   Search,
-  Filter,
   ArrowUpRight,
   ArrowDownRight,
   MoreHorizontal,
@@ -14,7 +13,7 @@ import {
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
+import { Card, CardContent } from '@/components/ui/card'
 import {
   Select,
   SelectContent,
@@ -37,85 +36,65 @@ import {
   getCoinName,
   getEmotionEmoji,
 } from '@/lib/utils'
+import { createClient, isSupabaseConfigured } from '@/lib/supabase/client'
+import { useStore } from '@/stores/useStore'
+import { useToast } from '@/hooks/use-toast'
 import type { Trade, TradeType } from '@/types'
 
-// Mock data
-const mockTrades: Trade[] = [
-  {
-    id: '1',
-    user_id: '1',
-    coin_symbol: 'BTC',
-    trade_type: 'BUY',
-    quantity: 0.05,
-    price: 98000000,
-    total_amount: 4900000,
-    fee: 4900,
-    exchange: '업비트',
-    trade_at: new Date(Date.now() - 3600000).toISOString(),
-    memo: '지지선에서 반등 예상',
-    emotion: 4,
-    strategy: '지지선 반등',
-    screenshot_url: null,
-    created_at: new Date().toISOString(),
-  },
-  {
-    id: '2',
-    user_id: '1',
-    coin_symbol: 'ETH',
-    trade_type: 'SELL',
-    quantity: 1.5,
-    price: 3500000,
-    total_amount: 5250000,
-    fee: 5250,
-    exchange: '업비트',
-    trade_at: new Date(Date.now() - 86400000).toISOString(),
-    memo: '목표가 도달로 익절',
-    emotion: 5,
-    strategy: '목표가 매도',
-    screenshot_url: null,
-    created_at: new Date().toISOString(),
-  },
-  {
-    id: '3',
-    user_id: '1',
-    coin_symbol: 'SOL',
-    trade_type: 'BUY',
-    quantity: 10,
-    price: 180000,
-    total_amount: 1800000,
-    fee: 1800,
-    exchange: '업비트',
-    trade_at: new Date(Date.now() - 172800000).toISOString(),
-    memo: null,
-    emotion: 3,
-    strategy: '분할 매수',
-    screenshot_url: null,
-    created_at: new Date().toISOString(),
-  },
-  {
-    id: '4',
-    user_id: '1',
-    coin_symbol: 'XRP',
-    trade_type: 'SELL',
-    quantity: 1000,
-    price: 850,
-    total_amount: 850000,
-    fee: 850,
-    exchange: '빗썸',
-    trade_at: new Date(Date.now() - 259200000).toISOString(),
-    memo: '손절',
-    emotion: 2,
-    strategy: '손절',
-    screenshot_url: null,
-    created_at: new Date().toISOString(),
-  },
-]
-
 export default function TradesPage() {
-  const [trades, setTrades] = useState<Trade[]>(mockTrades)
+  const { toast } = useToast()
+  const { trades, setTrades, deleteTrade } = useStore()
+  const [loading, setLoading] = useState(true)
   const [filter, setFilter] = useState<'all' | TradeType>('all')
   const [search, setSearch] = useState('')
   const [exchange, setExchange] = useState<string>('all')
+
+  useEffect(() => {
+    const fetchTrades = async () => {
+      if (isSupabaseConfigured()) {
+        try {
+          const supabase = createClient()
+          const { data: userData } = await supabase.auth.getUser()
+
+          if (userData.user) {
+            const { data, error } = await supabase
+              .from('trades')
+              .select('*')
+              .eq('user_id', userData.user.id)
+              .order('trade_at', { ascending: false })
+
+            if (error) throw error
+            setTrades(data as Trade[])
+          }
+        } catch (error) {
+          console.error('Failed to fetch trades:', error)
+        }
+      }
+      setLoading(false)
+    }
+
+    fetchTrades()
+  }, [setTrades])
+
+  const handleDelete = async (id: string) => {
+    if (!confirm('정말 삭제하시겠습니까?')) return
+
+    try {
+      if (isSupabaseConfigured()) {
+        const supabase = createClient()
+        const { error } = await supabase.from('trades').delete().eq('id', id)
+        if (error) throw error
+      }
+      deleteTrade(id)
+      toast({ title: '삭제 완료', description: '매매 기록이 삭제되었습니다.' })
+    } catch (error) {
+      toast({
+        variant: 'destructive',
+        title: '삭제 실패',
+        description: '매매 기록 삭제에 실패했습니다.',
+      })
+    }
+  }
 
   const filteredTrades = trades.filter((trade) => {
     const matchesFilter = filter === 'all' || trade.trade_type === filter
@@ -225,7 +204,11 @@ export default function TradesPage() {
       {/* Trades List */}
       <Card>
         <CardContent className="p-0">
-          {filteredTrades.length === 0 ? (
+          {loading ? (
+            <div className="py-12 text-center">
+              <p className="text-muted-foreground">불러오는 중...</p>
+            </div>
+          ) : filteredTrades.length === 0 ? (
             <div className="py-12 text-center">
               <p className="text-muted-foreground">매매 기록이 없습니다</p>
               <Link href="/trades/new">
@@ -309,7 +292,10 @@ export default function TradesPage() {
                             수정
                           </Link>
                         </DropdownMenuItem>
-                        <DropdownMenuItem className="text-destructive">
+                        <DropdownMenuItem
+                          className="text-destructive"
+                          onClick={() => handleDelete(trade.id)}
+                        >
                           <Trash2 className="mr-2 h-4 w-4" />
                           삭제
                         </DropdownMenuItem>

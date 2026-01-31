@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useState } from 'react'
+import { useEffect, useState, useMemo } from 'react'
 import { Wallet, TrendingUp, TrendingDown, BarChart3, Plus } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { StatCard } from '@/components/dashboard/StatCard'
@@ -8,142 +8,202 @@ import { PnLChart } from '@/components/dashboard/PnLChart'
 import { RecentTrades } from '@/components/dashboard/RecentTrades'
 import { HoldingsOverview } from '@/components/dashboard/HoldingsOverview'
 import { PerformanceStats } from '@/components/dashboard/PerformanceStats'
-import { createClient } from '@/lib/supabase/client'
+import { createClient, isSupabaseConfigured } from '@/lib/supabase/client'
+import { useStore } from '@/stores/useStore'
 import Link from 'next/link'
 import type { Trade, Holding, DashboardSummary } from '@/types'
 
-// Mock data for demonstration
-const mockChartData = [
-  { date: '1/1', value: 10000000, pnl: 0 },
-  { date: '1/5', value: 10500000, pnl: 500000 },
-  { date: '1/10', value: 10200000, pnl: 200000 },
-  { date: '1/15', value: 11000000, pnl: 1000000 },
-  { date: '1/20', value: 10800000, pnl: 800000 },
-  { date: '1/25', value: 11500000, pnl: 1500000 },
-  { date: '1/29', value: 12000000, pnl: 2000000 },
-]
+// 거래 기록에서 보유 현황 계산
+function calculateHoldings(trades: Trade[]): Holding[] {
+  const holdingsMap = new Map<string, { quantity: number; totalCost: number }>()
 
-const mockTrades: Trade[] = [
-  {
-    id: '1',
-    user_id: '1',
-    coin_symbol: 'BTC',
-    trade_type: 'BUY',
-    quantity: 0.05,
-    price: 98000000,
-    total_amount: 4900000,
-    fee: 4900,
-    exchange: '업비트',
-    trade_at: new Date(Date.now() - 3600000).toISOString(),
-    memo: null,
-    emotion: 4,
-    strategy: '지지선 반등',
-    screenshot_url: null,
-    created_at: new Date().toISOString(),
-  },
-  {
-    id: '2',
-    user_id: '1',
-    coin_symbol: 'ETH',
-    trade_type: 'SELL',
-    quantity: 1.5,
-    price: 3500000,
-    total_amount: 5250000,
-    fee: 5250,
-    exchange: '업비트',
-    trade_at: new Date(Date.now() - 86400000).toISOString(),
-    memo: '목표가 도달',
-    emotion: 5,
-    strategy: '목표가 매도',
-    screenshot_url: null,
-    created_at: new Date().toISOString(),
-  },
-  {
-    id: '3',
-    user_id: '1',
-    coin_symbol: 'SOL',
-    trade_type: 'BUY',
-    quantity: 10,
-    price: 180000,
-    total_amount: 1800000,
-    fee: 1800,
-    exchange: '업비트',
-    trade_at: new Date(Date.now() - 172800000).toISOString(),
-    memo: null,
-    emotion: 3,
-    strategy: '분할 매수',
-    screenshot_url: null,
-    created_at: new Date().toISOString(),
-  },
-]
+  // 시간순 정렬
+  const sortedTrades = [...trades].sort(
+    (a, b) => new Date(a.trade_at).getTime() - new Date(b.trade_at).getTime()
+  )
 
-const mockHoldings: Holding[] = [
-  {
-    id: '1',
-    user_id: '1',
-    coin_symbol: 'BTC',
-    avg_price: 95000000,
-    quantity: 0.1,
-    total_invested: 9500000,
+  for (const trade of sortedTrades) {
+    const current = holdingsMap.get(trade.coin_symbol) || { quantity: 0, totalCost: 0 }
+
+    if (trade.trade_type === 'BUY') {
+      current.quantity += trade.quantity
+      current.totalCost += trade.total_amount
+    } else {
+      // SELL: 평균 단가 기준으로 비용 차감
+      const avgPrice = current.quantity > 0 ? current.totalCost / current.quantity : 0
+      current.quantity -= trade.quantity
+      current.totalCost = current.quantity * avgPrice
+    }
+
+    if (current.quantity > 0.00000001) {
+      holdingsMap.set(trade.coin_symbol, current)
+    } else {
+      holdingsMap.delete(trade.coin_symbol)
+    }
+  }
+
+  return Array.from(holdingsMap.entries()).map(([symbol, data]) => ({
+    id: symbol,
+    user_id: '',
+    coin_symbol: symbol,
+    avg_price: data.totalCost / data.quantity,
+    quantity: data.quantity,
+    total_invested: data.totalCost,
     updated_at: new Date().toISOString(),
-    current_price: 98000000,
-    current_value: 9800000,
-    unrealized_pnl: 300000,
-    unrealized_pnl_percent: 3.16,
-  },
-  {
-    id: '2',
-    user_id: '1',
-    coin_symbol: 'ETH',
-    avg_price: 3300000,
-    quantity: 2,
-    total_invested: 6600000,
-    updated_at: new Date().toISOString(),
-    current_price: 3500000,
-    current_value: 7000000,
-    unrealized_pnl: 400000,
-    unrealized_pnl_percent: 6.06,
-  },
-  {
-    id: '3',
-    user_id: '1',
-    coin_symbol: 'SOL',
-    avg_price: 180000,
-    quantity: 10,
-    total_invested: 1800000,
-    updated_at: new Date().toISOString(),
-    current_price: 175000,
-    current_value: 1750000,
-    unrealized_pnl: -50000,
-    unrealized_pnl_percent: -2.78,
-  },
-]
+  }))
+}
+
+// 일별 손익 차트 데이터 생성
+function generateChartData(trades: Trade[]): { date: string; value: number; pnl: number }[] {
+  if (trades.length === 0) return []
+
+  const dailyPnl = new Map<string, number>()
+
+  for (const trade of trades) {
+    const date = new Date(trade.trade_at).toLocaleDateString('ko-KR', { month: 'numeric', day: 'numeric' })
+    const pnl = trade.trade_type === 'SELL' ? trade.total_amount : -trade.total_amount
+    dailyPnl.set(date, (dailyPnl.get(date) || 0) + pnl)
+  }
+
+  let cumulative = 0
+  return Array.from(dailyPnl.entries())
+    .sort((a, b) => {
+      const [aMonth, aDay] = a[0].split('/').map(Number)
+      const [bMonth, bDay] = b[0].split('/').map(Number)
+      return aMonth !== bMonth ? aMonth - bMonth : aDay - bDay
+    })
+    .map(([date, pnl]) => {
+      cumulative += pnl
+      return { date, value: cumulative, pnl }
+    })
+}
 
 export default function DashboardPage() {
+  const { trades, setTrades, holdings, setHoldings } = useStore()
   const [loading, setLoading] = useState(true)
-  const [summary, setSummary] = useState<DashboardSummary>({
-    totalAsset: 18550000,
-    totalInvested: 17900000,
-    totalRealizedPnl: 2500000,
-    totalUnrealizedPnl: 650000,
-    totalPnlPercent: 17.6,
-    todayPnl: 350000,
-    todayPnlPercent: 1.92,
-    winRate: 68,
-    totalTrades: 25,
-    winTrades: 17,
-    lossTrades: 8,
-  })
-  const [trades, setTrades] = useState<Trade[]>(mockTrades)
-  const [holdings, setHoldings] = useState<Holding[]>(mockHoldings)
 
   useEffect(() => {
-    // TODO: Fetch real data from Supabase
     const fetchData = async () => {
+      if (isSupabaseConfigured()) {
+        try {
+          const supabase = createClient()
+          const { data: userData } = await supabase.auth.getUser()
+
+          if (userData.user) {
+            // 거래 내역 조회
+            const { data: tradesData } = await supabase
+              .from('trades')
+              .select('*')
+              .eq('user_id', userData.user.id)
+              .order('trade_at', { ascending: false })
+
+            if (tradesData) {
+              setTrades(tradesData as Trade[])
+            }
+
+            // 보유 현황 조회 (DB에 있으면)
+            const { data: holdingsData } = await supabase
+              .from('holdings')
+              .select('*')
+              .eq('user_id', userData.user.id)
+
+            if (holdingsData && holdingsData.length > 0) {
+              setHoldings(holdingsData as Holding[])
+            }
+          }
+        } catch (error) {
+          console.error('Failed to fetch data:', error)
+        }
+      }
       setLoading(false)
     }
+
     fetchData()
-  }, [])
+  }, [setTrades, setHoldings])
+
+  // 거래 기록 기반으로 통계 계산
+  const summary = useMemo<DashboardSummary>(() => {
+    if (trades.length === 0) {
+      return {
+        totalAsset: 0,
+        totalInvested: 0,
+        totalRealizedPnl: 0,
+        totalUnrealizedPnl: 0,
+        totalPnlPercent: 0,
+        todayPnl: 0,
+        todayPnlPercent: 0,
+        winRate: 0,
+        totalTrades: 0,
+        winTrades: 0,
+        lossTrades: 0,
+      }
+    }
+
+    const buyTotal = trades
+      .filter((t) => t.trade_type === 'BUY')
+      .reduce((sum, t) => sum + t.total_amount, 0)
+
+    const sellTotal = trades
+      .filter((t) => t.trade_type === 'SELL')
+      .reduce((sum, t) => sum + t.total_amount, 0)
+
+    const realizedPnl = sellTotal - buyTotal
+    const totalInvested = buyTotal
+
+    // 오늘 거래
+    const today = new Date().toDateString()
+    const todayTrades = trades.filter(
+      (t) => new Date(t.trade_at).toDateString() === today
+    )
+    const todayBuy = todayTrades
+      .filter((t) => t.trade_type === 'BUY')
+      .reduce((sum, t) => sum + t.total_amount, 0)
+    const todaySell = todayTrades
+      .filter((t) => t.trade_type === 'SELL')
+      .reduce((sum, t) => sum + t.total_amount, 0)
+    const todayPnl = todaySell - todayBuy
+
+    // 승률 계산 (매도 거래 기준)
+    const sellTrades = trades.filter((t) => t.trade_type === 'SELL')
+    const winTrades = sellTrades.filter((t) => {
+      // 같은 코인의 이전 매수 평균가와 비교
+      const prevBuys = trades.filter(
+        (bt) =>
+          bt.trade_type === 'BUY' &&
+          bt.coin_symbol === t.coin_symbol &&
+          new Date(bt.trade_at) < new Date(t.trade_at)
+      )
+      if (prevBuys.length === 0) return false
+      const avgBuyPrice =
+        prevBuys.reduce((sum, bt) => sum + bt.price, 0) / prevBuys.length
+      return t.price > avgBuyPrice
+    }).length
+
+    const winRate = sellTrades.length > 0 ? (winTrades / sellTrades.length) * 100 : 0
+
+    return {
+      totalAsset: totalInvested + realizedPnl,
+      totalInvested,
+      totalRealizedPnl: realizedPnl,
+      totalUnrealizedPnl: 0, // 실시간 가격 없이는 계산 불가
+      totalPnlPercent: totalInvested > 0 ? (realizedPnl / totalInvested) * 100 : 0,
+      todayPnl,
+      todayPnlPercent: totalInvested > 0 ? (todayPnl / totalInvested) * 100 : 0,
+      winRate: Math.round(winRate),
+      totalTrades: trades.length,
+      winTrades,
+      lossTrades: sellTrades.length - winTrades,
+    }
+  }, [trades])
+
+  // 보유 현황 계산 (DB에 없으면 거래 기록에서 계산)
+  const displayHoldings = useMemo(() => {
+    if (holdings.length > 0) return holdings
+    return calculateHoldings(trades)
+  }, [trades, holdings])
+
+  // 차트 데이터
+  const chartData = useMemo(() => generateChartData(trades), [trades])
 
   if (loading) {
     return (
@@ -206,8 +266,8 @@ export default function DashboardPage() {
 
       {/* Charts & Holdings */}
       <div className="grid gap-6 lg:grid-cols-3">
-        <PnLChart data={mockChartData} />
-        <HoldingsOverview holdings={holdings} />
+        <PnLChart data={chartData} />
+        <HoldingsOverview holdings={displayHoldings} />
       </div>
 
       {/* Performance & Recent Trades */}
@@ -217,10 +277,10 @@ export default function DashboardPage() {
           totalTrades={summary.totalTrades}
           winTrades={summary.winTrades}
           lossTrades={summary.lossTrades}
-          avgProfit={8.5}
-          avgLoss={-4.2}
+          avgProfit={0}
+          avgLoss={0}
         />
-        <RecentTrades trades={trades} />
+        <RecentTrades trades={trades.slice(0, 5)} />
       </div>
     </div>
   )
