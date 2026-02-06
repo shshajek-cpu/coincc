@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import Link from 'next/link'
 import {
   Plus,
@@ -10,9 +10,18 @@ import {
   MoreHorizontal,
   Pencil,
   Trash2,
+  LayoutList,
+  LayoutGrid,
+  X,
+  Image as ImageIcon,
+  ChevronDown,
+  ChevronUp,
+  Upload,
+  Loader2,
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
+import { Label } from '@/components/ui/label'
 import { Card, CardContent } from '@/components/ui/card'
 import {
   Select,
@@ -27,6 +36,12 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu'
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog'
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import {
   cn,
@@ -37,17 +52,68 @@ import {
   getEmotionEmoji,
 } from '@/lib/utils'
 import { createClient, isSupabaseConfigured } from '@/lib/supabase/client'
+import { uploadScreenshot, validateFile } from '@/lib/supabase/storage'
 import { useStore } from '@/stores/useStore'
 import { useToast } from '@/hooks/use-toast'
 import type { Trade, TradeType } from '@/types'
 
+const COINS = [
+  'BTC', 'ETH', 'XRP', 'SOL', 'ADA', 'DOGE', 'DOT', 'MATIC',
+  'AVAX', 'LINK', 'ATOM', 'UNI', 'ETC', 'BCH', 'LTC', 'NEAR', 'APT', 'ARB', 'OP'
+]
+
+const EXCHANGES = ['업비트', '빗썸', '코인원', '바이낸스', '기타']
+
+const STRATEGIES = [
+  '지지선 반등',
+  '저항선 돌파',
+  '분할 매수',
+  '분할 매도',
+  '목표가 매도',
+  '손절',
+  '추세 추종',
+  '역추세',
+  '기타',
+]
+
+const EMOTIONS = [
+  { value: 1, emoji: '😫', label: '매우 나쁨' },
+  { value: 2, emoji: '😟', label: '나쁨' },
+  { value: 3, emoji: '😐', label: '보통' },
+  { value: 4, emoji: '😊', label: '좋음' },
+  { value: 5, emoji: '🤩', label: '매우 좋음' },
+]
+
 export default function TradesPage() {
   const { toast } = useToast()
-  const { trades, setTrades, deleteTrade } = useStore()
+  const { trades, setTrades, deleteTrade, addTrade } = useStore()
   const [loading, setLoading] = useState(true)
   const [filter, setFilter] = useState<'all' | TradeType>('all')
   const [search, setSearch] = useState('')
   const [exchange, setExchange] = useState<string>('all')
+  const [viewMode, setViewMode] = useState<'list' | 'gallery'>('list')
+  const [selectedTrade, setSelectedTrade] = useState<Trade | null>(null)
+
+  // Inline form state
+  const [showAdvanced, setShowAdvanced] = useState(false)
+  const [submitting, setSubmitting] = useState(false)
+  const [uploading, setUploading] = useState(false)
+  const [screenshotUrl, setScreenshotUrl] = useState<string | null>(null)
+  const [screenshotPreview, setScreenshotPreview] = useState<string | null>(null)
+  const fileInputRef = useRef<HTMLInputElement>(null)
+
+  const [formData, setFormData] = useState({
+    trade_type: 'BUY' as TradeType,
+    coin_symbol: '',
+    quantity: '',
+    price: '',
+    fee: '0',
+    exchange: '업비트',
+    trade_at: new Date().toISOString().slice(0, 16),
+    strategy: '',
+    emotion: 3,
+    memo: '',
+  })
 
   useEffect(() => {
     const fetchTrades = async () => {
@@ -75,6 +141,188 @@ export default function TradesPage() {
 
     fetchTrades()
   }, [setTrades])
+
+  const handleFileSelect = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0]
+    if (!file) return
+
+    const validationError = validateFile(file)
+    if (validationError) {
+      toast({
+        variant: 'destructive',
+        title: '파일 오류',
+        description: validationError,
+      })
+      return
+    }
+
+    const reader = new FileReader()
+    reader.onload = (event) => {
+      const dataUrl = event.target?.result as string
+      setScreenshotPreview(dataUrl)
+
+      if (!isSupabaseConfigured()) {
+        setScreenshotUrl(dataUrl)
+      }
+    }
+    reader.readAsDataURL(file)
+
+    if (isSupabaseConfigured()) {
+      setUploading(true)
+      try {
+        const supabase = createClient()
+        const { data: userData } = await supabase.auth.getUser()
+
+        if (!userData.user) {
+          toast({
+            variant: 'destructive',
+            title: '오류',
+            description: '로그인이 필요합니다.',
+          })
+          setScreenshotPreview(null)
+          return
+        }
+
+        const result = await uploadScreenshot(file, userData.user.id)
+
+        if (result.error) {
+          toast({
+            variant: 'destructive',
+            title: '업로드 실패',
+            description: result.error,
+          })
+          setScreenshotPreview(null)
+        } else {
+          setScreenshotUrl(result.url)
+          toast({
+            title: '업로드 완료',
+            description: '스크린샷이 업로드되었습니다.',
+          })
+        }
+      } catch {
+        toast({
+          variant: 'destructive',
+          title: '업로드 실패',
+          description: '스크린샷 업로드에 실패했습니다.',
+        })
+        setScreenshotPreview(null)
+      } finally {
+        setUploading(false)
+      }
+    }
+  }
+
+  const handleRemoveScreenshot = () => {
+    setScreenshotUrl(null)
+    setScreenshotPreview(null)
+    if (fileInputRef.current) {
+      fileInputRef.current.value = ''
+    }
+  }
+
+  const resetForm = () => {
+    setFormData({
+      trade_type: 'BUY',
+      coin_symbol: '',
+      quantity: '',
+      price: '',
+      fee: '0',
+      exchange: '업비트',
+      trade_at: new Date().toISOString().slice(0, 16),
+      strategy: '',
+      emotion: 3,
+      memo: '',
+    })
+    setScreenshotUrl(null)
+    setScreenshotPreview(null)
+    setShowAdvanced(false)
+    if (fileInputRef.current) {
+      fileInputRef.current.value = ''
+    }
+  }
+
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault()
+
+    if (!formData.coin_symbol || !formData.quantity || !formData.price) {
+      toast({
+        variant: 'destructive',
+        title: '입력 오류',
+        description: '필수 항목을 모두 입력해주세요.',
+      })
+      return
+    }
+
+    setSubmitting(true)
+
+    try {
+      const quantity = Number(formData.quantity)
+      const price = Number(formData.price)
+      const fee = Number(formData.fee) || 0
+      const total_amount = quantity * price
+
+      const tradeData = {
+        coin_symbol: formData.coin_symbol,
+        trade_type: formData.trade_type,
+        quantity,
+        price,
+        total_amount,
+        fee,
+        exchange: formData.exchange,
+        trade_at: new Date(formData.trade_at).toISOString(),
+        strategy: formData.strategy || null,
+        emotion: formData.emotion,
+        memo: formData.memo || null,
+        screenshot_url: screenshotUrl,
+      }
+
+      if (isSupabaseConfigured()) {
+        const supabase = createClient()
+        const { data: userData } = await supabase.auth.getUser()
+
+        if (!userData.user) {
+          throw new Error('로그인이 필요합니다.')
+        }
+
+        const { data, error } = await supabase
+          .from('trades')
+          .insert({
+            ...tradeData,
+            user_id: userData.user.id,
+          })
+          .select()
+          .single()
+
+        if (error) throw error
+
+        addTrade(data as Trade)
+      } else {
+        const demoTrade: Trade = {
+          id: crypto.randomUUID(),
+          user_id: 'demo-user',
+          ...tradeData,
+          created_at: new Date().toISOString(),
+        }
+        addTrade(demoTrade)
+      }
+
+      toast({
+        title: '매매 기록 완료',
+        description: `${formData.coin_symbol} ${formData.trade_type === 'BUY' ? '매수' : '매도'} 기록이 저장되었습니다.`,
+      })
+
+      resetForm()
+    } catch (error) {
+      console.error('Trade save error:', error)
+      toast({
+        variant: 'destructive',
+        title: '오류',
+        description: error instanceof Error ? error.message : '매매 기록 저장에 실패했습니다.',
+      })
+    } finally {
+      setSubmitting(false)
+    }
+  }
 
   const handleDelete = async (id: string) => {
     if (!confirm('정말 삭제하시겠습니까?')) return
@@ -113,6 +361,8 @@ export default function TradesPage() {
     totalVolume: trades.reduce((sum, t) => sum + t.total_amount, 0),
   }
 
+  const totalAmount = Number(formData.quantity) * Number(formData.price) || 0
+
   return (
     <div className="space-y-6">
       {/* Header */}
@@ -123,13 +373,276 @@ export default function TradesPage() {
             총 {stats.totalTrades}건의 매매 기록
           </p>
         </div>
-        <Link href="/trades/new">
-          <Button>
-            <Plus className="mr-2 h-4 w-4" />
-            새 매매 기록
-          </Button>
-        </Link>
       </div>
+
+      {/* Inline Trade Form */}
+      <Card>
+        <CardContent className="p-4">
+          <form onSubmit={handleSubmit} className="space-y-4">
+            {/* Main Row - Always Visible */}
+            <div className="flex flex-wrap items-end gap-2">
+              {/* Trade Type Toggle */}
+              <div className="w-full sm:w-auto">
+                <Tabs
+                  value={formData.trade_type}
+                  onValueChange={(v) => setFormData({ ...formData, trade_type: v as TradeType })}
+                >
+                  <TabsList className="grid w-full grid-cols-2 sm:w-[180px]">
+                    <TabsTrigger
+                      value="BUY"
+                      className="data-[state=active]:bg-success data-[state=active]:text-white"
+                    >
+                      매수
+                    </TabsTrigger>
+                    <TabsTrigger
+                      value="SELL"
+                      className="data-[state=active]:bg-danger data-[state=active]:text-white"
+                    >
+                      매도
+                    </TabsTrigger>
+                  </TabsList>
+                </Tabs>
+              </div>
+
+              {/* Coin Select */}
+              <div className="flex-1 min-w-[120px]">
+                <Select
+                  value={formData.coin_symbol}
+                  onValueChange={(v) => setFormData({ ...formData, coin_symbol: v })}
+                >
+                  <SelectTrigger>
+                    <SelectValue placeholder="코인" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {COINS.map((coin) => (
+                      <SelectItem key={coin} value={coin}>
+                        {coin}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+
+              {/* Quantity */}
+              <div className="flex-1 min-w-[100px]">
+                <Input
+                  type="number"
+                  step="any"
+                  placeholder="수량"
+                  value={formData.quantity}
+                  onChange={(e) => setFormData({ ...formData, quantity: e.target.value })}
+                  className="font-number"
+                />
+              </div>
+
+              {/* Price */}
+              <div className="flex-1 min-w-[120px]">
+                <Input
+                  type="number"
+                  step="any"
+                  placeholder="단가"
+                  value={formData.price}
+                  onChange={(e) => setFormData({ ...formData, price: e.target.value })}
+                  className="font-number"
+                />
+              </div>
+
+              {/* Total Amount Display */}
+              <div className="hidden lg:flex items-center px-3 py-2 rounded-md bg-muted min-w-[120px]">
+                <span className="font-number text-sm font-medium">
+                  {formatKRW(totalAmount)}
+                </span>
+              </div>
+
+              {/* Submit Button */}
+              <Button type="submit" disabled={submitting} className="min-w-[80px]">
+                {submitting ? <Loader2 className="h-4 w-4 animate-spin" /> : '기록'}
+              </Button>
+
+              {/* Advanced Toggle */}
+              <Button
+                type="button"
+                variant="ghost"
+                size="icon"
+                onClick={() => setShowAdvanced(!showAdvanced)}
+              >
+                {showAdvanced ? <ChevronUp className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />}
+              </Button>
+            </div>
+
+            {/* Total Amount - Mobile */}
+            <div className="lg:hidden rounded-md bg-muted p-2">
+              <span className="font-number text-sm font-medium">
+                총 금액: {formatKRW(totalAmount)}
+              </span>
+            </div>
+
+            {/* Advanced Section - Collapsible */}
+            {showAdvanced && (
+              <div className="space-y-4 rounded-lg border border-border bg-muted/30 p-4">
+                <div className="flex items-center gap-2 text-sm font-medium">
+                  상세 옵션
+                </div>
+
+                <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+                  {/* Exchange */}
+                  <div className="space-y-2">
+                    <Label htmlFor="exchange" className="text-xs">거래소</Label>
+                    <Select
+                      value={formData.exchange}
+                      onValueChange={(v) => setFormData({ ...formData, exchange: v })}
+                    >
+                      <SelectTrigger id="exchange">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {EXCHANGES.map((ex) => (
+                          <SelectItem key={ex} value={ex}>
+                            {ex}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+
+                  {/* Fee */}
+                  <div className="space-y-2">
+                    <Label htmlFor="fee" className="text-xs">수수료</Label>
+                    <Input
+                      id="fee"
+                      type="number"
+                      step="any"
+                      placeholder="0"
+                      value={formData.fee}
+                      onChange={(e) => setFormData({ ...formData, fee: e.target.value })}
+                      className="font-number"
+                    />
+                  </div>
+
+                  {/* Trade Date */}
+                  <div className="space-y-2">
+                    <Label htmlFor="trade_at" className="text-xs">거래 일시</Label>
+                    <Input
+                      id="trade_at"
+                      type="datetime-local"
+                      value={formData.trade_at}
+                      onChange={(e) => setFormData({ ...formData, trade_at: e.target.value })}
+                    />
+                  </div>
+
+                  {/* Strategy */}
+                  <div className="space-y-2">
+                    <Label htmlFor="strategy" className="text-xs">전략</Label>
+                    <Select
+                      value={formData.strategy}
+                      onValueChange={(v) => setFormData({ ...formData, strategy: v })}
+                    >
+                      <SelectTrigger id="strategy">
+                        <SelectValue placeholder="전략 선택" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {STRATEGIES.map((strategy) => (
+                          <SelectItem key={strategy} value={strategy}>
+                            {strategy}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+
+                  {/* Emotion */}
+                  <div className="space-y-2 sm:col-span-2">
+                    <Label className="text-xs">감정 상태</Label>
+                    <div className="flex gap-2">
+                      {EMOTIONS.map((emotion) => (
+                        <button
+                          key={emotion.value}
+                          type="button"
+                          onClick={() => setFormData({ ...formData, emotion: emotion.value })}
+                          className={cn(
+                            'flex flex-1 flex-col items-center gap-1 rounded-lg border p-2 transition-colors',
+                            formData.emotion === emotion.value
+                              ? 'border-primary bg-primary/10'
+                              : 'border-border hover:border-primary/50'
+                          )}
+                        >
+                          <span className="text-xl">{emotion.emoji}</span>
+                          <span className="text-[10px] text-muted-foreground">{emotion.label}</span>
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                </div>
+
+                {/* Memo */}
+                <div className="space-y-2">
+                  <Label htmlFor="memo" className="text-xs">메모</Label>
+                  <textarea
+                    id="memo"
+                    placeholder="매매에 대한 메모를 남겨주세요..."
+                    value={formData.memo}
+                    onChange={(e) => setFormData({ ...formData, memo: e.target.value })}
+                    className="flex min-h-[80px] w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
+                  />
+                </div>
+
+                {/* Screenshot Upload */}
+                <div className="space-y-2">
+                  <Label className="text-xs">스크린샷</Label>
+                  <input
+                    ref={fileInputRef}
+                    type="file"
+                    accept="image/jpeg,image/png,image/webp,image/gif"
+                    onChange={handleFileSelect}
+                    className="hidden"
+                  />
+
+                  {screenshotPreview ? (
+                    <div className="relative">
+                      <div className="relative aspect-video w-full overflow-hidden rounded-lg border border-border">
+                        {/* eslint-disable-next-line @next/next/no-img-element */}
+                        <img
+                          src={screenshotPreview}
+                          alt="스크린샷 미리보기"
+                          className="h-full w-full object-contain"
+                        />
+                        {uploading && (
+                          <div className="absolute inset-0 flex items-center justify-center bg-background/80">
+                            <Loader2 className="h-8 w-8 animate-spin text-primary" />
+                          </div>
+                        )}
+                      </div>
+                      <Button
+                        type="button"
+                        variant="destructive"
+                        size="icon"
+                        className="absolute -right-2 -top-2"
+                        onClick={handleRemoveScreenshot}
+                        disabled={uploading}
+                      >
+                        <X className="h-4 w-4" />
+                      </Button>
+                    </div>
+                  ) : (
+                    <button
+                      type="button"
+                      onClick={() => fileInputRef.current?.click()}
+                      className="flex w-full items-center justify-center rounded-lg border-2 border-dashed border-border p-4 transition-colors hover:border-primary/50 hover:bg-muted/50"
+                    >
+                      <div className="text-center">
+                        <Upload className="mx-auto h-6 w-6 text-muted-foreground" />
+                        <p className="mt-1 text-xs text-muted-foreground">
+                          차트 스크린샷 업로드
+                        </p>
+                      </div>
+                    </button>
+                  )}
+                </div>
+              </div>
+            )}
+          </form>
+        </CardContent>
+      </Card>
 
       {/* Stats Cards */}
       <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
@@ -196,33 +709,57 @@ export default function TradesPage() {
                   <SelectItem value="코인원">코인원</SelectItem>
                 </SelectContent>
               </Select>
+              <div className="flex rounded-lg border border-border">
+                <Button
+                  variant={viewMode === 'list' ? 'secondary' : 'ghost'}
+                  size="icon"
+                  className="rounded-r-none"
+                  onClick={() => setViewMode('list')}
+                >
+                  <LayoutList className="h-4 w-4" />
+                </Button>
+                <Button
+                  variant={viewMode === 'gallery' ? 'secondary' : 'ghost'}
+                  size="icon"
+                  className="rounded-l-none"
+                  onClick={() => setViewMode('gallery')}
+                >
+                  <LayoutGrid className="h-4 w-4" />
+                </Button>
+              </div>
             </div>
           </div>
         </CardContent>
       </Card>
 
-      {/* Trades List */}
-      <Card>
-        <CardContent className="p-0">
-          {loading ? (
-            <div className="py-12 text-center">
-              <p className="text-muted-foreground">불러오는 중...</p>
-            </div>
-          ) : filteredTrades.length === 0 ? (
-            <div className="py-12 text-center">
-              <p className="text-muted-foreground">매매 기록이 없습니다</p>
-              <Link href="/trades/new">
-                <Button variant="outline" className="mt-4">
-                  첫 매매 기록하기
-                </Button>
-              </Link>
-            </div>
-          ) : (
+      {/* Trades List / Gallery */}
+      {loading ? (
+        <Card>
+          <CardContent className="py-12 text-center">
+            <p className="text-muted-foreground">불러오는 중...</p>
+          </CardContent>
+        </Card>
+      ) : filteredTrades.length === 0 ? (
+        <Card>
+          <CardContent className="py-12 text-center">
+            <p className="text-muted-foreground">매매 기록이 없습니다</p>
+            <Link href="/trades/new">
+              <Button variant="outline" className="mt-4">
+                첫 매매 기록하기
+              </Button>
+            </Link>
+          </CardContent>
+        </Card>
+      ) : viewMode === 'list' ? (
+        /* List View */
+        <Card>
+          <CardContent className="p-0">
             <div className="divide-y divide-border">
               {filteredTrades.map((trade) => (
                 <div
                   key={trade.id}
-                  className="flex items-center justify-between p-4 transition-colors hover:bg-muted/50"
+                  className="flex cursor-pointer items-center justify-between p-4 transition-colors hover:bg-muted/50"
+                  onClick={() => setSelectedTrade(trade)}
                 >
                   <div className="flex items-center gap-4">
                     <div
@@ -257,6 +794,9 @@ export default function TradesPage() {
                             {getEmotionEmoji(trade.emotion)}
                           </span>
                         )}
+                        {trade.screenshot_url && (
+                          <ImageIcon className="h-4 w-4 text-muted-foreground" />
+                        )}
                       </div>
                       <p className="text-sm text-muted-foreground">
                         {getCoinName(trade.coin_symbol)} · {trade.exchange} ·{' '}
@@ -281,7 +821,11 @@ export default function TradesPage() {
 
                     <DropdownMenu>
                       <DropdownMenuTrigger asChild>
-                        <Button variant="ghost" size="icon">
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          onClick={(e) => e.stopPropagation()}
+                        >
                           <MoreHorizontal className="h-4 w-4" />
                         </Button>
                       </DropdownMenuTrigger>
@@ -294,7 +838,10 @@ export default function TradesPage() {
                         </DropdownMenuItem>
                         <DropdownMenuItem
                           className="text-destructive"
-                          onClick={() => handleDelete(trade.id)}
+                          onClick={(e) => {
+                            e.stopPropagation()
+                            handleDelete(trade.id)
+                          }}
                         >
                           <Trash2 className="mr-2 h-4 w-4" />
                           삭제
@@ -305,9 +852,227 @@ export default function TradesPage() {
                 </div>
               ))}
             </div>
+          </CardContent>
+        </Card>
+      ) : (
+        /* Gallery View */
+        <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+          {filteredTrades.map((trade) => (
+            <Card
+              key={trade.id}
+              className="cursor-pointer overflow-hidden transition-all hover:ring-2 hover:ring-primary/50"
+              onClick={() => setSelectedTrade(trade)}
+            >
+              {/* Screenshot or Placeholder */}
+              <div className="relative aspect-video bg-muted">
+                {trade.screenshot_url ? (
+                  /* eslint-disable-next-line @next/next/no-img-element */
+                  <img
+                    src={trade.screenshot_url}
+                    alt={`${trade.coin_symbol} 차트`}
+                    className="h-full w-full object-cover"
+                  />
+                ) : (
+                  <div className="flex h-full w-full items-center justify-center">
+                    <div className="text-center text-muted-foreground">
+                      <ImageIcon className="mx-auto h-10 w-10 opacity-50" />
+                      <p className="mt-2 text-xs">스크린샷 없음</p>
+                    </div>
+                  </div>
+                )}
+                {/* Trade Type Badge */}
+                <div
+                  className={cn(
+                    'absolute left-2 top-2 rounded px-2 py-1 text-xs font-bold text-white',
+                    trade.trade_type === 'BUY' ? 'bg-success' : 'bg-danger'
+                  )}
+                >
+                  {trade.trade_type === 'BUY' ? '매수' : '매도'}
+                </div>
+              </div>
+
+              <CardContent className="p-4">
+                <div className="flex items-start justify-between">
+                  <div>
+                    <div className="flex items-center gap-2">
+                      <span className="text-lg font-bold">{trade.coin_symbol}</span>
+                      {trade.emotion && (
+                        <span>{getEmotionEmoji(trade.emotion)}</span>
+                      )}
+                    </div>
+                    <p className="text-sm text-muted-foreground">
+                      {formatDateTime(trade.trade_at)}
+                    </p>
+                  </div>
+                  <div className="text-right">
+                    <p className="font-number font-bold">
+                      {formatKRW(trade.total_amount)}
+                    </p>
+                    <p className="font-number text-xs text-muted-foreground">
+                      @ {formatKRW(trade.price)}
+                    </p>
+                  </div>
+                </div>
+                {trade.strategy && (
+                  <p className="mt-2 text-sm text-primary">{trade.strategy}</p>
+                )}
+                {trade.memo && (
+                  <p className="mt-2 line-clamp-2 text-sm text-muted-foreground">
+                    {trade.memo}
+                  </p>
+                )}
+              </CardContent>
+            </Card>
+          ))}
+        </div>
+      )}
+
+      {/* Trade Detail Modal */}
+      <Dialog open={!!selectedTrade} onOpenChange={() => setSelectedTrade(null)}>
+        <DialogContent className="max-h-[90vh] max-w-2xl overflow-y-auto">
+          {selectedTrade && (
+            <>
+              <DialogHeader>
+                <DialogTitle className="flex items-center gap-3">
+                  <div
+                    className={cn(
+                      'flex h-10 w-10 items-center justify-center rounded-full',
+                      selectedTrade.trade_type === 'BUY'
+                        ? 'bg-success/10 text-success'
+                        : 'bg-danger/10 text-danger'
+                    )}
+                  >
+                    {selectedTrade.trade_type === 'BUY' ? (
+                      <ArrowDownRight className="h-5 w-5" />
+                    ) : (
+                      <ArrowUpRight className="h-5 w-5" />
+                    )}
+                  </div>
+                  <div>
+                    <div className="flex items-center gap-2">
+                      <span>{selectedTrade.coin_symbol}</span>
+                      <span
+                        className={cn(
+                          'rounded px-2 py-0.5 text-sm font-medium',
+                          selectedTrade.trade_type === 'BUY'
+                            ? 'bg-success/10 text-success'
+                            : 'bg-danger/10 text-danger'
+                        )}
+                      >
+                        {selectedTrade.trade_type === 'BUY' ? '매수' : '매도'}
+                      </span>
+                    </div>
+                    <p className="text-sm font-normal text-muted-foreground">
+                      {getCoinName(selectedTrade.coin_symbol)}
+                    </p>
+                  </div>
+                </DialogTitle>
+              </DialogHeader>
+
+              <div className="space-y-6">
+                {/* Screenshot */}
+                {selectedTrade.screenshot_url && (
+                  <div className="overflow-hidden rounded-lg border border-border">
+                    {/* eslint-disable-next-line @next/next/no-img-element */}
+                    <img
+                      src={selectedTrade.screenshot_url}
+                      alt={`${selectedTrade.coin_symbol} 차트`}
+                      className="w-full"
+                    />
+                  </div>
+                )}
+
+                {/* Trade Info Grid */}
+                <div className="grid grid-cols-2 gap-4">
+                  <div className="rounded-lg bg-muted p-3">
+                    <p className="text-sm text-muted-foreground">거래금액</p>
+                    <p className="font-number text-lg font-bold">
+                      {formatKRW(selectedTrade.total_amount)}
+                    </p>
+                  </div>
+                  <div className="rounded-lg bg-muted p-3">
+                    <p className="text-sm text-muted-foreground">단가</p>
+                    <p className="font-number text-lg font-bold">
+                      {formatKRW(selectedTrade.price)}
+                    </p>
+                  </div>
+                  <div className="rounded-lg bg-muted p-3">
+                    <p className="text-sm text-muted-foreground">수량</p>
+                    <p className="font-number text-lg font-bold">
+                      {formatQuantity(selectedTrade.quantity)} {selectedTrade.coin_symbol}
+                    </p>
+                  </div>
+                  <div className="rounded-lg bg-muted p-3">
+                    <p className="text-sm text-muted-foreground">수수료</p>
+                    <p className="font-number text-lg font-bold">
+                      {formatKRW(selectedTrade.fee)}
+                    </p>
+                  </div>
+                </div>
+
+                {/* Details */}
+                <div className="space-y-3">
+                  <div className="flex justify-between border-b border-border pb-2">
+                    <span className="text-muted-foreground">거래소</span>
+                    <span className="font-medium">{selectedTrade.exchange}</span>
+                  </div>
+                  <div className="flex justify-between border-b border-border pb-2">
+                    <span className="text-muted-foreground">거래 일시</span>
+                    <span className="font-medium">
+                      {formatDateTime(selectedTrade.trade_at)}
+                    </span>
+                  </div>
+                  {selectedTrade.strategy && (
+                    <div className="flex justify-between border-b border-border pb-2">
+                      <span className="text-muted-foreground">전략</span>
+                      <span className="font-medium text-primary">
+                        {selectedTrade.strategy}
+                      </span>
+                    </div>
+                  )}
+                  {selectedTrade.emotion && (
+                    <div className="flex justify-between border-b border-border pb-2">
+                      <span className="text-muted-foreground">감정 상태</span>
+                      <span className="text-xl">
+                        {getEmotionEmoji(selectedTrade.emotion)}
+                      </span>
+                    </div>
+                  )}
+                </div>
+
+                {/* Memo */}
+                {selectedTrade.memo && (
+                  <div className="rounded-lg bg-muted p-4">
+                    <p className="mb-2 text-sm font-medium text-muted-foreground">
+                      메모
+                    </p>
+                    <p className="whitespace-pre-wrap">{selectedTrade.memo}</p>
+                  </div>
+                )}
+
+                {/* Actions */}
+                <div className="flex gap-2">
+                  <Button asChild className="flex-1">
+                    <Link href={`/trades/${selectedTrade.id}`}>
+                      <Pencil className="mr-2 h-4 w-4" />
+                      수정하기
+                    </Link>
+                  </Button>
+                  <Button
+                    variant="destructive"
+                    onClick={() => {
+                      handleDelete(selectedTrade.id)
+                      setSelectedTrade(null)
+                    }}
+                  >
+                    <Trash2 className="h-4 w-4" />
+                  </Button>
+                </div>
+              </div>
+            </>
           )}
-        </CardContent>
-      </Card>
+        </DialogContent>
+      </Dialog>
     </div>
   )
 }

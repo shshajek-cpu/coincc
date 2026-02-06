@@ -1,5 +1,4 @@
 @import url('https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/variable/pretendardvariable.min.css');
-@import url('https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&display=swap');
 
 @tailwind base;
 @tailwind components;
@@ -7,7 +6,6 @@
 
 :root {
   --font-pretendard: 'Pretendard Variable', Pretendard, -apple-system, BlinkMacSystemFont, system-ui, Roboto, 'Helvetica Neue', 'Segoe UI', 'Apple SD Gothic Neo', 'Noto Sans KR', 'Malgun Gothic', 'Apple Color Emoji', 'Segoe UI Emoji', 'Segoe UI Symbol', sans-serif;
-  --font-space-grotesk: 'Space Grotesk', monospace;
 }
 
 @layer base {
@@ -40,9 +38,11 @@
 }
 
 @layer components {
-  /* Number styling with Space Grotesk */
+  /* Number styling with Pretendard */
   .font-number {
-    font-family: var(--font-space-grotesk);
+    font-family: var(--font-pretendard);
+    font-feature-settings: 'tnum' 1;
+    font-variant-numeric: tabular-nums;
   }
 
   /* Profit/Loss colors */

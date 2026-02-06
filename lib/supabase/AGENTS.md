@@ -14,6 +14,7 @@ Supabase 클라이언트 설정. 브라우저용, 서버용, 미들웨어용 클
 | `client.ts` | 브라우저용 Supabase 클라이언트 (Client Components) |
 | `server.ts` | 서버용 Supabase 클라이언트 (Server Components, Route Handlers) |
 | `middleware.ts` | 미들웨어용 - 세션 갱신 및 인증 검사 |
+| `storage.ts` | Supabase Storage 유틸리티 - 스크린샷 업로드/삭제 |
 
 ## For AI Agents
 
@@ -49,6 +50,16 @@ const { data, error } = await supabase
 
 // 인증 상태 확인
 const { data: { user } } = await supabase.auth.getUser()
+
+// 스크린샷 업로드
+import { uploadScreenshot, deleteScreenshot, validateFile } from '@/lib/supabase/storage'
+
+const file = inputRef.current.files[0]
+const error = validateFile(file) // 클라이언트 사전 검증
+const { url, error } = await uploadScreenshot(file, userId)
+
+// 스크린샷 삭제
+await deleteScreenshot(screenshotUrl)
 ```
 
 ### 미들웨어 보호 경로

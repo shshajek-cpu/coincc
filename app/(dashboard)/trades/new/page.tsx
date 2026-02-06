@@ -1,8 +1,8 @@
 'use client'
 
-import { useState } from 'react'
+import { useState, useRef } from 'react'
 import { useRouter } from 'next/navigation'
-import { ArrowLeft, Upload, X } from 'lucide-react'
+import { ArrowLeft, Upload, X, Loader2 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
@@ -18,6 +18,7 @@ import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { cn, formatKRW, getCoinName } from '@/lib/utils'
 import { useToast } from '@/hooks/use-toast'
 import { createClient, isSupabaseConfigured } from '@/lib/supabase/client'
+import { uploadScreenshot, validateFile } from '@/lib/supabase/storage'
 import { useStore } from '@/stores/useStore'
 import type { Trade, TradeType } from '@/types'
 
@@ -52,6 +53,10 @@ export default function NewTradePage() {
   const router = useRouter()
   const { toast } = useToast()
   const [loading, setLoading] = useState(false)
+  const [uploading, setUploading] = useState(false)
+  const [screenshotUrl, setScreenshotUrl] = useState<string | null>(null)
+  const [screenshotPreview, setScreenshotPreview] = useState<string | null>(null)
+  const fileInputRef = useRef<HTMLInputElement>(null)
   const addTrade = useStore((state) => state.addTrade)
 
   const [formData, setFormData] = useState({
@@ -66,6 +71,88 @@ export default function NewTradePage() {
     emotion: 3,
     memo: '',
   })
+
+  const handleFileSelect = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0]
+    if (!file) return
+
+    // Validate file
+    const validationError = validateFile(file)
+    if (validationError) {
+      toast({
+        variant: 'destructive',
+        title: '파일 오류',
+        description: validationError,
+      })
+      return
+    }
+
+    // Show preview immediately
+    const reader = new FileReader()
+    reader.onload = (event) => {
+      const dataUrl = event.target?.result as string
+      setScreenshotPreview(dataUrl)
+
+      // In demo mode, use data URL directly as screenshot URL
+      if (!isSupabaseConfigured()) {
+        setScreenshotUrl(dataUrl)
+      }
+    }
+    reader.readAsDataURL(file)
+
+    // Upload if Supabase is configured
+    if (isSupabaseConfigured()) {
+      setUploading(true)
+      try {
+        const supabase = createClient()
+        const { data: userData } = await supabase.auth.getUser()
+
+        if (!userData.user) {
+          toast({
+            variant: 'destructive',
+            title: '오류',
+            description: '로그인이 필요합니다.',
+          })
+          setScreenshotPreview(null)
+          return
+        }
+
+        const result = await uploadScreenshot(file, userData.user.id)
+
+        if (result.error) {
+          toast({
+            variant: 'destructive',
+            title: '업로드 실패',
+            description: result.error,
+          })
+          setScreenshotPreview(null)
+        } else {
+          setScreenshotUrl(result.url)
+          toast({
+            title: '업로드 완료',
+            description: '스크린샷이 업로드되었습니다.',
+          })
+        }
+      } catch {
+        toast({
+          variant: 'destructive',
+          title: '업로드 실패',
+          description: '스크린샷 업로드에 실패했습니다.',
+        })
+        setScreenshotPreview(null)
+      } finally {
+        setUploading(false)
+      }
+    }
+  }
+
+  const handleRemoveScreenshot = () => {
+    setScreenshotUrl(null)
+    setScreenshotPreview(null)
+    if (fileInputRef.current) {
+      fileInputRef.current.value = ''
+    }
+  }
 
   const totalAmount = Number(formData.quantity) * Number(formData.price) || 0
   const totalWithFee = totalAmount + (Number(formData.fee) || 0)
@@ -102,7 +189,7 @@ export default function NewTradePage() {
         strategy: formData.strategy || null,
         emotion: formData.emotion,
         memo: formData.memo || null,
-        screenshot_url: null,
+        screenshot_url: screenshotUrl,
       }
 
       if (isSupabaseConfigured()) {
@@ -381,17 +468,57 @@ export default function NewTradePage() {
             <CardTitle>스크린샷</CardTitle>
           </CardHeader>
           <CardContent>
-            <div className="flex items-center justify-center rounded-lg border-2 border-dashed border-border p-8">
-              <div className="text-center">
-                <Upload className="mx-auto h-8 w-8 text-muted-foreground" />
-                <p className="mt-2 text-sm text-muted-foreground">
-                  차트 스크린샷을 업로드하세요
-                </p>
-                <Button variant="outline" className="mt-4" type="button">
-                  파일 선택
+            <input
+              ref={fileInputRef}
+              type="file"
+              accept="image/jpeg,image/png,image/webp,image/gif"
+              onChange={handleFileSelect}
+              className="hidden"
+            />
+
+            {screenshotPreview ? (
+              <div className="relative">
+                <div className="relative aspect-video w-full overflow-hidden rounded-lg border border-border">
+                  {/* eslint-disable-next-line @next/next/no-img-element */}
+                  <img
+                    src={screenshotPreview}
+                    alt="스크린샷 미리보기"
+                    className="h-full w-full object-contain"
+                  />
+                  {uploading && (
+                    <div className="absolute inset-0 flex items-center justify-center bg-background/80">
+                      <Loader2 className="h-8 w-8 animate-spin text-primary" />
+                    </div>
+                  )}
+                </div>
+                <Button
+                  type="button"
+                  variant="destructive"
+                  size="icon"
+                  className="absolute -right-2 -top-2"
+                  onClick={handleRemoveScreenshot}
+                  disabled={uploading}
+                >
+                  <X className="h-4 w-4" />
                 </Button>
               </div>
-            </div>
+            ) : (
+              <button
+                type="button"
+                onClick={() => fileInputRef.current?.click()}
+                className="flex w-full items-center justify-center rounded-lg border-2 border-dashed border-border p-8 transition-colors hover:border-primary/50 hover:bg-muted/50"
+              >
+                <div className="text-center">
+                  <Upload className="mx-auto h-8 w-8 text-muted-foreground" />
+                  <p className="mt-2 text-sm text-muted-foreground">
+                    차트 스크린샷을 업로드하세요
+                  </p>
+                  <p className="mt-1 text-xs text-muted-foreground">
+                    JPG, PNG, WebP, GIF (최대 5MB)
+                  </p>
+                </div>
+              </button>
+            )}
           </CardContent>
         </Card>
 

@@ -1,8 +1,8 @@
 'use client'
 
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { useRouter, useParams } from 'next/navigation'
-import { ArrowLeft, Trash2 } from 'lucide-react'
+import { ArrowLeft, Trash2, Upload, X, Loader2 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
@@ -18,6 +18,7 @@ import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { cn, formatKRW, getCoinName } from '@/lib/utils'
 import { useToast } from '@/hooks/use-toast'
 import { createClient, isSupabaseConfigured } from '@/lib/supabase/client'
+import { uploadScreenshot, deleteScreenshot, validateFile } from '@/lib/supabase/storage'
 import { useStore } from '@/stores/useStore'
 import type { Trade, TradeType } from '@/types'
 
@@ -56,6 +57,11 @@ export default function EditTradePage() {
   const { trades, updateTrade, deleteTrade } = useStore()
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
+  const [uploading, setUploading] = useState(false)
+  const [screenshotUrl, setScreenshotUrl] = useState<string | null>(null)
+  const [screenshotPreview, setScreenshotPreview] = useState<string | null>(null)
+  const [originalScreenshotUrl, setOriginalScreenshotUrl] = useState<string | null>(null)
+  const fileInputRef = useRef<HTMLInputElement>(null)
 
   const [formData, setFormData] = useState({
     trade_type: 'BUY' as TradeType,
@@ -69,6 +75,89 @@ export default function EditTradePage() {
     emotion: 3,
     memo: '',
   })
+
+  const handleFileSelect = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0]
+    if (!file) return
+
+    const validationError = validateFile(file)
+    if (validationError) {
+      toast({
+        variant: 'destructive',
+        title: '파일 오류',
+        description: validationError,
+      })
+      return
+    }
+
+    const reader = new FileReader()
+    reader.onload = (event) => {
+      const dataUrl = event.target?.result as string
+      setScreenshotPreview(dataUrl)
+
+      // In demo mode, use data URL directly as screenshot URL
+      if (!isSupabaseConfigured()) {
+        setScreenshotUrl(dataUrl)
+      }
+    }
+    reader.readAsDataURL(file)
+
+    if (isSupabaseConfigured()) {
+      setUploading(true)
+      try {
+        const supabase = createClient()
+        const { data: userData } = await supabase.auth.getUser()
+
+        if (!userData.user) {
+          toast({
+            variant: 'destructive',
+            title: '오류',
+            description: '로그인이 필요합니다.',
+          })
+          setScreenshotPreview(null)
+          return
+        }
+
+        const result = await uploadScreenshot(file, userData.user.id)
+
+        if (result.error) {
+          toast({
+            variant: 'destructive',
+            title: '업로드 실패',
+            description: result.error,
+          })
+          setScreenshotPreview(null)
+        } else {
+          setScreenshotUrl(result.url)
+          toast({
+            title: '업로드 완료',
+            description: '스크린샷이 업로드되었습니다.',
+          })
+        }
+      } catch {
+        toast({
+          variant: 'destructive',
+          title: '업로드 실패',
+          description: '스크린샷 업로드에 실패했습니다.',
+        })
+        setScreenshotPreview(null)
+      } finally {
+        setUploading(false)
+      }
+    }
+  }
+
+  const handleRemoveScreenshot = async () => {
+    // Delete old screenshot if it exists and is from storage
+    if (screenshotUrl && screenshotUrl.includes('screenshots')) {
+      await deleteScreenshot(screenshotUrl)
+    }
+    setScreenshotUrl(null)
+    setScreenshotPreview(null)
+    if (fileInputRef.current) {
+      fileInputRef.current.value = ''
+    }
+  }
 
   useEffect(() => {
     const loadTrade = async () => {
@@ -106,6 +195,11 @@ export default function EditTradePage() {
           emotion: trade.emotion || 3,
           memo: trade.memo || '',
         })
+        if (trade.screenshot_url) {
+          setScreenshotUrl(trade.screenshot_url)
+          setScreenshotPreview(trade.screenshot_url)
+          setOriginalScreenshotUrl(trade.screenshot_url)
+        }
       } else {
         toast({
           variant: 'destructive',
@@ -144,6 +238,11 @@ export default function EditTradePage() {
       const fee = Number(formData.fee) || 0
       const total_amount = quantity * price
 
+      // Delete old screenshot if changed
+      if (originalScreenshotUrl && originalScreenshotUrl !== screenshotUrl) {
+        await deleteScreenshot(originalScreenshotUrl)
+      }
+
       const tradeData = {
         coin_symbol: formData.coin_symbol,
         trade_type: formData.trade_type,
@@ -156,6 +255,7 @@ export default function EditTradePage() {
         strategy: formData.strategy || null,
         emotion: formData.emotion,
         memo: formData.memo || null,
+        screenshot_url: screenshotUrl,
       }
 
       if (isSupabaseConfigured()) {
@@ -440,6 +540,66 @@ export default function EditTradePage() {
                 className="flex min-h-[100px] w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
               />
             </div>
+          </CardContent>
+        </Card>
+
+        {/* Screenshot Upload */}
+        <Card>
+          <CardHeader>
+            <CardTitle>스크린샷</CardTitle>
+          </CardHeader>
+          <CardContent>
+            <input
+              ref={fileInputRef}
+              type="file"
+              accept="image/jpeg,image/png,image/webp,image/gif"
+              onChange={handleFileSelect}
+              className="hidden"
+            />
+
+            {screenshotPreview ? (
+              <div className="relative">
+                <div className="relative aspect-video w-full overflow-hidden rounded-lg border border-border">
+                  {/* eslint-disable-next-line @next/next/no-img-element */}
+                  <img
+                    src={screenshotPreview}
+                    alt="스크린샷 미리보기"
+                    className="h-full w-full object-contain"
+                  />
+                  {uploading && (
+                    <div className="absolute inset-0 flex items-center justify-center bg-background/80">
+                      <Loader2 className="h-8 w-8 animate-spin text-primary" />
+                    </div>
+                  )}
+                </div>
+                <Button
+                  type="button"
+                  variant="destructive"
+                  size="icon"
+                  className="absolute -right-2 -top-2"
+                  onClick={handleRemoveScreenshot}
+                  disabled={uploading}
+                >
+                  <X className="h-4 w-4" />
+                </Button>
+              </div>
+            ) : (
+              <button
+                type="button"
+                onClick={() => fileInputRef.current?.click()}
+                className="flex w-full items-center justify-center rounded-lg border-2 border-dashed border-border p-8 transition-colors hover:border-primary/50 hover:bg-muted/50"
+              >
+                <div className="text-center">
+                  <Upload className="mx-auto h-8 w-8 text-muted-foreground" />
+                  <p className="mt-2 text-sm text-muted-foreground">
+                    차트 스크린샷을 업로드하세요
+                  </p>
+                  <p className="mt-1 text-xs text-muted-foreground">
+                    JPG, PNG, WebP, GIF (최대 5MB)
+                  </p>
+                </div>
+              </button>
+            )}
           </CardContent>
         </Card>
 
