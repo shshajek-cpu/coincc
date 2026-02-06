@@ -1,6 +1,6 @@
 import { create } from 'zustand'
 import { persist } from 'zustand/middleware'
-import type { Trade, Holding, DashboardSummary, User } from '@/types'
+import type { Trade, Holding, DashboardSummary, User, TradePair } from '@/types'
 
 interface AppState {
   // User
@@ -13,6 +13,8 @@ interface AppState {
   addTrade: (trade: Trade) => void
   updateTrade: (id: string, trade: Partial<Trade>) => void
   deleteTrade: (id: string) => void
+  getOpenBuyTrades: (coin_symbol: string) => Trade[]
+  getTradePairs: () => TradePair[]
 
   // Holdings
   holdings: Holding[]
@@ -64,6 +66,51 @@ export const useStore = create<AppState>()(
         set((state) => ({
           trades: state.trades.filter((t) => t.id !== id),
         })),
+      getOpenBuyTrades: (coin_symbol: string) => {
+        const state = get()
+        const pairedBuyIds = new Set(
+          state.trades
+            .filter((t) => t.paired_trade_id !== null)
+            .map((t) => t.paired_trade_id as string)
+        )
+        return state.trades.filter(
+          (t) =>
+            t.coin_symbol === coin_symbol &&
+            t.trade_type === 'BUY' &&
+            !pairedBuyIds.has(t.id)
+        )
+      },
+      getTradePairs: () => {
+        const state = get()
+        const tradePairs: TradePair[] = []
+
+        state.trades
+          .filter((t) => t.trade_type === 'SELL' && t.paired_trade_id !== null)
+          .forEach((sellTrade) => {
+            const buyTrade = state.trades.find((t) => t.id === sellTrade.paired_trade_id)
+            if (buyTrade) {
+              const buyDate = new Date(buyTrade.trade_at)
+              const sellDate = new Date(sellTrade.trade_at)
+              const holding_days = Math.floor(
+                (sellDate.getTime() - buyDate.getTime()) / (1000 * 60 * 60 * 24)
+              )
+
+              tradePairs.push({
+                id: sellTrade.id,
+                coin_symbol: sellTrade.coin_symbol,
+                buy_trade: buyTrade,
+                sell_trade: sellTrade,
+                realized_pnl: sellTrade.realized_pnl || 0,
+                pnl_percentage: sellTrade.pnl_percentage || 0,
+                holding_days,
+              })
+            }
+          })
+
+        return tradePairs.sort(
+          (a, b) => new Date(b.sell_trade.trade_at).getTime() - new Date(a.sell_trade.trade_at).getTime()
+        )
+      },
 
       // Holdings
       holdings: [],

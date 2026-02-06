@@ -221,12 +221,12 @@ function calculateStrategyPerformance(trades: Trade[]) {
 
 // Mock data for demo mode
 const mockTrades: Trade[] = [
-  { id: '1', user_id: '1', coin_symbol: 'BTC', trade_type: 'BUY', quantity: 0.1, price: 90000000, total_amount: 9000000, fee: 9000, exchange: '업비트', trade_at: '2025-01-15T10:30:00Z', memo: null, emotion: 4, strategy: '지지선 반등', screenshot_url: null, created_at: '' },
-  { id: '2', user_id: '1', coin_symbol: 'BTC', trade_type: 'SELL', quantity: 0.1, price: 95000000, total_amount: 9500000, fee: 9500, exchange: '업비트', trade_at: '2025-01-20T14:00:00Z', memo: null, emotion: 5, strategy: '목표가 매도', screenshot_url: null, created_at: '' },
-  { id: '3', user_id: '1', coin_symbol: 'ETH', trade_type: 'BUY', quantity: 2, price: 3200000, total_amount: 6400000, fee: 6400, exchange: '업비트', trade_at: '2025-01-10T09:00:00Z', memo: null, emotion: 3, strategy: '분할 매수', screenshot_url: null, created_at: '' },
-  { id: '4', user_id: '1', coin_symbol: 'ETH', trade_type: 'SELL', quantity: 1, price: 3500000, total_amount: 3500000, fee: 3500, exchange: '업비트', trade_at: '2025-01-18T16:30:00Z', memo: null, emotion: 4, strategy: '분할 매도', screenshot_url: null, created_at: '' },
-  { id: '5', user_id: '1', coin_symbol: 'SOL', trade_type: 'BUY', quantity: 10, price: 180000, total_amount: 1800000, fee: 1800, exchange: '업비트', trade_at: '2025-01-12T11:00:00Z', memo: null, emotion: 3, strategy: '저항선 돌파', screenshot_url: null, created_at: '' },
-  { id: '6', user_id: '1', coin_symbol: 'SOL', trade_type: 'SELL', quantity: 10, price: 170000, total_amount: 1700000, fee: 1700, exchange: '업비트', trade_at: '2025-01-22T08:00:00Z', memo: null, emotion: 2, strategy: '손절', screenshot_url: null, created_at: '' },
+  { id: '1', user_id: '1', coin_symbol: 'BTC', trade_type: 'BUY', quantity: 0.1, price: 90000000, total_amount: 9000000, fee: 9000, exchange: '업비트', trade_at: '2025-01-15T10:30:00Z', memo: null, emotion: 4, strategy: '지지선 반등', screenshot_url: null, created_at: '', paired_trade_id: null, realized_pnl: null, pnl_percentage: null },
+  { id: '2', user_id: '1', coin_symbol: 'BTC', trade_type: 'SELL', quantity: 0.1, price: 95000000, total_amount: 9500000, fee: 9500, exchange: '업비트', trade_at: '2025-01-20T14:00:00Z', memo: null, emotion: 5, strategy: '목표가 매도', screenshot_url: null, created_at: '', paired_trade_id: null, realized_pnl: null, pnl_percentage: null },
+  { id: '3', user_id: '1', coin_symbol: 'ETH', trade_type: 'BUY', quantity: 2, price: 3200000, total_amount: 6400000, fee: 6400, exchange: '업비트', trade_at: '2025-01-10T09:00:00Z', memo: null, emotion: 3, strategy: '분할 매수', screenshot_url: null, created_at: '', paired_trade_id: null, realized_pnl: null, pnl_percentage: null },
+  { id: '4', user_id: '1', coin_symbol: 'ETH', trade_type: 'SELL', quantity: 1, price: 3500000, total_amount: 3500000, fee: 3500, exchange: '업비트', trade_at: '2025-01-18T16:30:00Z', memo: null, emotion: 4, strategy: '분할 매도', screenshot_url: null, created_at: '', paired_trade_id: null, realized_pnl: null, pnl_percentage: null },
+  { id: '5', user_id: '1', coin_symbol: 'SOL', trade_type: 'BUY', quantity: 10, price: 180000, total_amount: 1800000, fee: 1800, exchange: '업비트', trade_at: '2025-01-12T11:00:00Z', memo: null, emotion: 3, strategy: '저항선 돌파', screenshot_url: null, created_at: '', paired_trade_id: null, realized_pnl: null, pnl_percentage: null },
+  { id: '6', user_id: '1', coin_symbol: 'SOL', trade_type: 'SELL', quantity: 10, price: 170000, total_amount: 1700000, fee: 1700, exchange: '업비트', trade_at: '2025-01-22T08:00:00Z', memo: null, emotion: 2, strategy: '손절', screenshot_url: null, created_at: '', paired_trade_id: null, realized_pnl: null, pnl_percentage: null },
 ]
 
 export default function AnalysisPage() {

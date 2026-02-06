@@ -1,9 +1,9 @@
 'use client'
 
-import { useState, useEffect, useRef } from 'react'
+import { useState, useEffect, useRef, useMemo } from 'react'
 import Link from 'next/link'
+import dynamic from 'next/dynamic'
 import {
-  Plus,
   Search,
   ArrowUpRight,
   ArrowDownRight,
@@ -18,11 +18,13 @@ import {
   ChevronUp,
   Upload,
   Loader2,
+  LinkIcon,
+  BarChart3,
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
-import { Card, CardContent } from '@/components/ui/card'
+import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import {
   Select,
   SelectContent,
@@ -57,6 +59,11 @@ import { useStore } from '@/stores/useStore'
 import { useToast } from '@/hooks/use-toast'
 import type { Trade, TradeType } from '@/types'
 
+const TradePairChart = dynamic(
+  () => import('@/components/charts/TradePairChart').then((mod) => ({ default: mod.TradePairChart })),
+  { ssr: false }
+)
+
 const COINS = [
   'BTC', 'ETH', 'XRP', 'SOL', 'ADA', 'DOGE', 'DOT', 'MATIC',
   'AVAX', 'LINK', 'ATOM', 'UNI', 'ETC', 'BCH', 'LTC', 'NEAR', 'APT', 'ARB', 'OP'
@@ -86,13 +93,16 @@ const EMOTIONS = [
 
 export default function TradesPage() {
   const { toast } = useToast()
-  const { trades, setTrades, deleteTrade, addTrade } = useStore()
+  const { trades, setTrades, deleteTrade, addTrade, getOpenBuyTrades } = useStore()
   const [loading, setLoading] = useState(true)
   const [filter, setFilter] = useState<'all' | TradeType>('all')
   const [search, setSearch] = useState('')
   const [exchange, setExchange] = useState<string>('all')
   const [viewMode, setViewMode] = useState<'list' | 'gallery'>('list')
   const [selectedTrade, setSelectedTrade] = useState<Trade | null>(null)
+
+  // Chart section state
+  const [chartCoin, setChartCoin] = useState<string>('')
 
   // Inline form state
   const [showAdvanced, setShowAdvanced] = useState(false)
@@ -101,6 +111,9 @@ export default function TradesPage() {
   const [screenshotUrl, setScreenshotUrl] = useState<string | null>(null)
   const [screenshotPreview, setScreenshotPreview] = useState<string | null>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
+
+  // Paired trade state (for SELL)
+  const [selectedBuyTradeId, setSelectedBuyTradeId] = useState<string>('')
 
   const [formData, setFormData] = useState({
     trade_type: 'BUY' as TradeType,
@@ -114,6 +127,36 @@ export default function TradesPage() {
     emotion: 3,
     memo: '',
   })
+
+  // Compute open buy trades for the selected coin when in SELL mode
+  const openBuyTrades = useMemo(() => {
+    if (formData.trade_type !== 'SELL' || !formData.coin_symbol) return []
+    return getOpenBuyTrades(formData.coin_symbol)
+  }, [formData.trade_type, formData.coin_symbol, getOpenBuyTrades, trades])
+
+  // Compute unique traded coins for chart selector, sorted by frequency
+  const tradedCoins = useMemo(() => {
+    const coinCounts = new Map<string, number>()
+    trades.forEach((t) => {
+      coinCounts.set(t.coin_symbol, (coinCounts.get(t.coin_symbol) || 0) + 1)
+    })
+    return Array.from(coinCounts.entries())
+      .sort((a, b) => b[1] - a[1])
+      .map(([coin]) => coin)
+  }, [trades])
+
+  // Set default chart coin when trades load
+  useEffect(() => {
+    if (tradedCoins.length > 0 && !chartCoin) {
+      setChartCoin(tradedCoins[0])
+    }
+  }, [tradedCoins, chartCoin])
+
+  // Get trades for the selected chart coin
+  const chartTrades = useMemo(() => {
+    if (!chartCoin) return []
+    return trades.filter((t) => t.coin_symbol === chartCoin)
+  }, [trades, chartCoin])
 
   useEffect(() => {
     const fetchTrades = async () => {
@@ -233,6 +276,7 @@ export default function TradesPage() {
       emotion: 3,
       memo: '',
     })
+    setSelectedBuyTradeId('')
     setScreenshotUrl(null)
     setScreenshotPreview(null)
     setShowAdvanced(false)
@@ -240,6 +284,24 @@ export default function TradesPage() {
       fileInputRef.current.value = ''
     }
   }
+
+  // When user selects a buy trade to pair with
+  const handleBuyTradeSelect = (buyTradeId: string) => {
+    setSelectedBuyTradeId(buyTradeId)
+    const buyTrade = openBuyTrades.find((t) => t.id === buyTradeId)
+    if (buyTrade) {
+      // Auto-fill quantity from the selected buy trade
+      setFormData((prev) => ({
+        ...prev,
+        quantity: String(buyTrade.quantity),
+      }))
+    }
+  }
+
+  // Reset paired trade when switching trade type or coin
+  useEffect(() => {
+    setSelectedBuyTradeId('')
+  }, [formData.trade_type, formData.coin_symbol])
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
@@ -261,6 +323,20 @@ export default function TradesPage() {
       const fee = Number(formData.fee) || 0
       const total_amount = quantity * price
 
+      // Calculate PnL for SELL trades with a paired buy
+      let paired_trade_id: string | null = null
+      let realized_pnl: number | null = null
+      let pnl_percentage: number | null = null
+
+      if (formData.trade_type === 'SELL' && selectedBuyTradeId) {
+        const buyTrade = openBuyTrades.find((t) => t.id === selectedBuyTradeId)
+        if (buyTrade) {
+          paired_trade_id = buyTrade.id
+          realized_pnl = (price - buyTrade.price) * quantity
+          pnl_percentage = ((price - buyTrade.price) / buyTrade.price) * 100
+        }
+      }
+
       const tradeData = {
         coin_symbol: formData.coin_symbol,
         trade_type: formData.trade_type,
@@ -274,6 +350,9 @@ export default function TradesPage() {
         emotion: formData.emotion,
         memo: formData.memo || null,
         screenshot_url: screenshotUrl,
+        paired_trade_id,
+        realized_pnl,
+        pnl_percentage,
       }
 
       if (isSupabaseConfigured()) {
@@ -362,6 +441,14 @@ export default function TradesPage() {
   }
 
   const totalAmount = Number(formData.quantity) * Number(formData.price) || 0
+
+  // Helper to format PnL display
+  const formatPnl = (pnl: number, pnlPct: number) => {
+    const sign = pnl >= 0 ? '+' : ''
+    const pnlText = `${sign}${formatKRW(pnl)}`
+    const pctText = `(${sign}${pnlPct.toFixed(1)}%)`
+    return { pnlText, pctText, isProfit: pnl >= 0 }
+  }
 
   return (
     <div className="space-y-6">
@@ -476,6 +563,58 @@ export default function TradesPage() {
                 총 금액: {formatKRW(totalAmount)}
               </span>
             </div>
+
+            {/* Open Buy Trade Selector - visible when SELL and coin selected */}
+            {formData.trade_type === 'SELL' && formData.coin_symbol && (
+              <div className="rounded-lg border border-border bg-muted/30 p-3">
+                <Label className="text-xs font-medium text-muted-foreground mb-2 block">
+                  매수 거래 매칭 (선택사항)
+                </Label>
+                {openBuyTrades.length > 0 ? (
+                  <Select
+                    value={selectedBuyTradeId}
+                    onValueChange={handleBuyTradeSelect}
+                  >
+                    <SelectTrigger className="w-full">
+                      <SelectValue placeholder="매칭할 매수 거래를 선택하세요" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {openBuyTrades.map((buy) => (
+                        <SelectItem key={buy.id} value={buy.id}>
+                          <span className="font-number">
+                            {buy.coin_symbol} 매수 | {formatDateTime(buy.trade_at)} | {formatQuantity(buy.quantity)}개 @ {formatKRW(buy.price)} | {formatKRW(buy.total_amount)}
+                          </span>
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                ) : (
+                  <p className="text-xs text-muted-foreground">
+                    {formData.coin_symbol}에 대한 미매칭 매수 기록이 없습니다.
+                  </p>
+                )}
+                {/* PnL preview when buy trade selected and price entered */}
+                {selectedBuyTradeId && formData.price && (
+                  (() => {
+                    const buyTrade = openBuyTrades.find((t) => t.id === selectedBuyTradeId)
+                    if (!buyTrade) return null
+                    const sellPrice = Number(formData.price)
+                    const qty = Number(formData.quantity) || buyTrade.quantity
+                    const pnl = (sellPrice - buyTrade.price) * qty
+                    const pnlPct = ((sellPrice - buyTrade.price) / buyTrade.price) * 100
+                    const { pnlText, pctText, isProfit } = formatPnl(pnl, pnlPct)
+                    return (
+                      <div className={cn(
+                        'mt-2 rounded-md px-3 py-2 text-sm font-medium font-number',
+                        isProfit ? 'bg-success/10 text-success' : 'bg-danger/10 text-danger'
+                      )}>
+                        예상 손익: {pnlText} {pctText}
+                      </div>
+                    )
+                  })()
+                )}
+              </div>
+            )}
 
             {/* Advanced Section - Collapsible */}
             {showAdvanced && (
@@ -676,6 +815,41 @@ export default function TradesPage() {
         </Card>
       </div>
 
+      {/* Chart Section */}
+      {tradedCoins.length > 0 && (
+        <Card>
+          <CardHeader className="pb-3">
+            <div className="flex items-center justify-between">
+              <CardTitle className="flex items-center gap-2 text-lg">
+                <BarChart3 className="h-5 w-5" />
+                매매 차트
+              </CardTitle>
+              <Select value={chartCoin} onValueChange={setChartCoin}>
+                <SelectTrigger className="w-[140px]">
+                  <SelectValue placeholder="코인 선택" />
+                </SelectTrigger>
+                <SelectContent>
+                  {tradedCoins.map((coin) => (
+                    <SelectItem key={coin} value={coin}>
+                      {coin} ({getCoinName(coin)})
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+          </CardHeader>
+          <CardContent className="pt-0">
+            {chartCoin && (
+              <TradePairChart
+                coinSymbol={chartCoin}
+                trades={chartTrades}
+                height={400}
+              />
+            )}
+          </CardContent>
+        </Card>
+      )}
+
       {/* Filters */}
       <Card>
         <CardContent className="p-4">
@@ -789,6 +963,11 @@ export default function TradesPage() {
                         >
                           {trade.trade_type === 'BUY' ? '매수' : '매도'}
                         </span>
+                        {trade.paired_trade_id && (
+                          <span title="매수 거래 매칭됨">
+                            <LinkIcon className="h-3.5 w-3.5 text-primary" />
+                          </span>
+                        )}
                         {trade.emotion && (
                           <span title={`감정: ${trade.emotion}/5`}>
                             {getEmotionEmoji(trade.emotion)}
@@ -817,6 +996,20 @@ export default function TradesPage() {
                         {formatQuantity(trade.quantity)} {trade.coin_symbol} @{' '}
                         {formatKRW(trade.price)}
                       </p>
+                      {/* P&L display for SELL trades */}
+                      {trade.trade_type === 'SELL' && trade.realized_pnl != null && trade.pnl_percentage != null && (
+                        (() => {
+                          const { pnlText, pctText, isProfit } = formatPnl(trade.realized_pnl!, trade.pnl_percentage!)
+                          return (
+                            <p className={cn(
+                              'font-number text-sm font-medium',
+                              isProfit ? 'text-success' : 'text-danger'
+                            )}>
+                              {pnlText} {pctText}
+                            </p>
+                          )
+                        })()
+                      )}
                     </div>
 
                     <DropdownMenu>
@@ -889,6 +1082,12 @@ export default function TradesPage() {
                 >
                   {trade.trade_type === 'BUY' ? '매수' : '매도'}
                 </div>
+                {/* Paired indicator */}
+                {trade.paired_trade_id && (
+                  <div className="absolute right-2 top-2 rounded bg-primary/80 px-1.5 py-0.5">
+                    <LinkIcon className="h-3 w-3 text-white" />
+                  </div>
+                )}
               </div>
 
               <CardContent className="p-4">
@@ -913,6 +1112,20 @@ export default function TradesPage() {
                     </p>
                   </div>
                 </div>
+                {/* P&L for SELL in gallery */}
+                {trade.trade_type === 'SELL' && trade.realized_pnl != null && trade.pnl_percentage != null && (
+                  (() => {
+                    const { pnlText, pctText, isProfit } = formatPnl(trade.realized_pnl!, trade.pnl_percentage!)
+                    return (
+                      <div className={cn(
+                        'mt-2 rounded-md px-2 py-1 text-sm font-number font-medium',
+                        isProfit ? 'bg-success/10 text-success' : 'bg-danger/10 text-danger'
+                      )}>
+                        {pnlText} {pctText}
+                      </div>
+                    )
+                  })()
+                )}
                 {trade.strategy && (
                   <p className="mt-2 text-sm text-primary">{trade.strategy}</p>
                 )}
@@ -961,6 +1174,11 @@ export default function TradesPage() {
                       >
                         {selectedTrade.trade_type === 'BUY' ? '매수' : '매도'}
                       </span>
+                      {selectedTrade.paired_trade_id && (
+                        <span title="매수 거래 매칭됨">
+                          <LinkIcon className="h-4 w-4 text-primary" />
+                        </span>
+                      )}
                     </div>
                     <p className="text-sm font-normal text-muted-foreground">
                       {getCoinName(selectedTrade.coin_symbol)}
@@ -970,6 +1188,33 @@ export default function TradesPage() {
               </DialogHeader>
 
               <div className="space-y-6">
+                {/* P&L display for SELL trades */}
+                {selectedTrade.trade_type === 'SELL' && selectedTrade.realized_pnl != null && selectedTrade.pnl_percentage != null && (
+                  (() => {
+                    const { pnlText, pctText, isProfit } = formatPnl(selectedTrade.realized_pnl!, selectedTrade.pnl_percentage!)
+                    return (
+                      <div className={cn(
+                        'rounded-lg p-4 text-center',
+                        isProfit ? 'bg-success/10' : 'bg-danger/10'
+                      )}>
+                        <p className="text-sm text-muted-foreground mb-1">실현 손익</p>
+                        <p className={cn(
+                          'font-number text-2xl font-bold',
+                          isProfit ? 'text-success' : 'text-danger'
+                        )}>
+                          {pnlText}
+                        </p>
+                        <p className={cn(
+                          'font-number text-sm font-medium',
+                          isProfit ? 'text-success' : 'text-danger'
+                        )}>
+                          {pctText}
+                        </p>
+                      </div>
+                    )
+                  })()
+                )}
+
                 {/* Screenshot */}
                 {selectedTrade.screenshot_url && (
                   <div className="overflow-hidden rounded-lg border border-border">
@@ -1037,6 +1282,20 @@ export default function TradesPage() {
                         {getEmotionEmoji(selectedTrade.emotion)}
                       </span>
                     </div>
+                  )}
+                  {/* Show paired buy trade info */}
+                  {selectedTrade.paired_trade_id && (
+                    (() => {
+                      const pairedBuy = trades.find((t) => t.id === selectedTrade.paired_trade_id)
+                      return pairedBuy ? (
+                        <div className="flex justify-between border-b border-border pb-2">
+                          <span className="text-muted-foreground">매칭 매수</span>
+                          <span className="font-number text-sm font-medium">
+                            {formatDateTime(pairedBuy.trade_at)} @ {formatKRW(pairedBuy.price)}
+                          </span>
+                        </div>
+                      ) : null
+                    })()
                   )}
                 </div>
 

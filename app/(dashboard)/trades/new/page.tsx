@@ -219,6 +219,9 @@ export default function NewTradePage() {
           user_id: 'demo-user',
           ...tradeData,
           created_at: new Date().toISOString(),
+          paired_trade_id: null,
+          realized_pnl: null,
+          pnl_percentage: null,
         }
         addTrade(demoTrade)
       }

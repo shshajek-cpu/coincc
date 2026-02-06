@@ -37,6 +37,9 @@ export interface Trade {
   strategy: string | null
   screenshot_url: string | null
   created_at: string
+  paired_trade_id: string | null
+  realized_pnl: number | null
+  pnl_percentage: number | null
 }
 
 export interface TradeFormData {
@@ -50,6 +53,17 @@ export interface TradeFormData {
   memo?: string
   emotion?: number
   strategy?: string
+}
+
+// Trade pair (buy + sell linked)
+export interface TradePair {
+  id: string // sell trade id
+  coin_symbol: string
+  buy_trade: Trade
+  sell_trade: Trade
+  realized_pnl: number
+  pnl_percentage: number
+  holding_days: number // days between buy and sell
 }
 
 // Holding types
