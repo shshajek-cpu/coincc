@@ -209,6 +209,7 @@ export function TradePairChart({
     if (!chartContainerRef.current) return
 
     const abortController = new AbortController()
+    let crosshairUnsubscribe: (() => void) | null = null
 
     // Clean up previous chart and resize listener
     if (chartRef.current) {
@@ -385,7 +386,8 @@ export function TradePairChart({
         }
 
         // Add crosshair move handler for trade marker tooltips
-        chart.subscribeCrosshairMove((param) => {
+        // Store unsubscribe function to prevent memory leak
+        crosshairUnsubscribe = chart.subscribeCrosshairMove((param) => {
           if (!param.time || !param.point) {
             setHoveredTrade(null)
             setTooltipPosition(null)
@@ -394,7 +396,7 @@ export function TradePairChart({
 
           // Find trade at current time
           const hoveredTime = param.time
-          const trade = trades.find(t => {
+          const trade = filteredTrades.find(t => {
             const tradeDate = new Date(t.trade_at)
             let tradeTime: string | number
             if (timeFrame === 'D') {
@@ -439,6 +441,13 @@ export function TradePairChart({
 
     return () => {
       abortController.abort()
+
+      // Unsubscribe from crosshair events to prevent memory leak
+      if (crosshairUnsubscribe) {
+        crosshairUnsubscribe()
+        crosshairUnsubscribe = null
+      }
+
       if (resizeListenerRef.current) {
         window.removeEventListener('resize', resizeListenerRef.current)
         resizeListenerRef.current = null

@@ -17,14 +17,15 @@ interface UseUpbitOptions {
 export function useUpbit({
   symbols,
   realtime = true,
-  interval = 5000,
+  interval = 10000,
 }: UseUpbitOptions) {
   const [prices, setPrices] = useState<Record<string, UpbitTicker>>({})
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<Error | null>(null)
+  const [isConnected, setIsConnected] = useState(false)
   const wsRef = useRef<WebSocket | null>(null)
 
-  // Fetch initial prices
+  // Fetch initial prices - memoized with symbols dependency only
   const fetchPrices = useCallback(async () => {
     try {
       const tickers = await getTickers(symbols)
@@ -42,7 +43,7 @@ export function useUpbit({
     }
   }, [symbols])
 
-  // Handle WebSocket message
+  // Handle WebSocket message - no external dependencies
   const handleMessage = useCallback((ticker: UpbitTicker) => {
     const symbol = getSymbolFromMarket(ticker.market)
     setPrices((prev) => ({
@@ -69,18 +70,25 @@ export function useUpbit({
         (error) => {
           console.error('WebSocket error:', error)
           setError(new Error('WebSocket connection failed'))
+          setIsConnected(false)
         }
       )
 
+      setIsConnected(true)
+
       return () => {
-        wsRef.current?.close()
+        if (wsRef.current) {
+          wsRef.current.close()
+          wsRef.current = null
+        }
+        setIsConnected(false)
       }
     } else {
       // Use polling
       const pollInterval = setInterval(fetchPrices, interval)
       return () => clearInterval(pollInterval)
     }
-  }, [symbols, realtime, interval, fetchPrices, handleMessage])
+  }, [symbols, realtime, interval])
 
   // Get price for a specific symbol
   const getPrice = useCallback(
@@ -108,6 +116,7 @@ export function useUpbit({
     prices,
     loading,
     error,
+    isConnected,
     getPrice,
     getChangeRate,
     refresh,
