@@ -1,7 +1,7 @@
 'use client'
 
 import { useEffect, useRef, useState } from 'react'
-import { createChart, ColorType, CandlestickSeries, createSeriesMarkers } from 'lightweight-charts'
+import { createChart, ColorType, CandlestickSeries } from 'lightweight-charts'
 import type { Trade, UpbitCandle } from '@/types'
 import { getDailyCandles, getMinuteCandles } from '@/lib/upbit/api'
 import { formatKRW, cn } from '@/lib/utils'
@@ -170,7 +170,7 @@ export function TradePairChart({
             })
 
           try {
-            createSeriesMarkers(candleSeries, markers as any)
+            candleSeries.setMarkers(markers as any)
           } catch {
             // Markers might fail if trade dates are outside candle range
           }

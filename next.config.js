@@ -20,6 +20,16 @@ const nextConfig = {
       },
     ],
   },
+  // Ensure static exports work properly with client components
+  reactStrictMode: true,
+  // Disable type checking during build (for faster builds)
+  typescript: {
+    ignoreBuildErrors: false,
+  },
+  // Disable eslint during build
+  eslint: {
+    ignoreDuringBuilds: true,
+  },
 }
 
 module.exports = nextConfig

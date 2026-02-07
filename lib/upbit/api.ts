@@ -1,6 +1,7 @@
 import type { UpbitTicker, UpbitCandle } from '@/types'
 
-const UPBIT_API_URL = 'https://api.upbit.com/v1'
+// Use relative API route to avoid CORS issues in production
+const API_BASE_URL = '/api/upbit'
 
 // Public API endpoints (no authentication required)
 
@@ -9,7 +10,7 @@ const UPBIT_API_URL = 'https://api.upbit.com/v1'
  */
 export async function getTickers(markets: string[]): Promise<UpbitTicker[]> {
   const marketsParam = markets.map((m) => `KRW-${m}`).join(',')
-  const response = await fetch(`${UPBIT_API_URL}/ticker?markets=${marketsParam}`)
+  const response = await fetch(`${API_BASE_URL}?type=ticker&market=${marketsParam}`)
 
   if (!response.ok) {
     throw new Error('Failed to fetch tickers')
@@ -34,7 +35,7 @@ export async function getDailyCandles(
   count: number = 30
 ): Promise<UpbitCandle[]> {
   const response = await fetch(
-    `${UPBIT_API_URL}/candles/days?market=KRW-${symbol}&count=${count}`
+    `${API_BASE_URL}?type=days&market=KRW-${symbol}&count=${count}`
   )
 
   if (!response.ok) {
@@ -53,7 +54,7 @@ export async function getMinuteCandles(
   count: number = 100
 ): Promise<UpbitCandle[]> {
   const response = await fetch(
-    `${UPBIT_API_URL}/candles/minutes/${unit}?market=KRW-${symbol}&count=${count}`
+    `${API_BASE_URL}?type=minutes&market=KRW-${symbol}&unit=${unit}&count=${count}`
   )
 
   if (!response.ok) {
@@ -69,7 +70,8 @@ export async function getMinuteCandles(
 export async function getMarkets(): Promise<
   { market: string; korean_name: string; english_name: string }[]
 > {
-  const response = await fetch(`${UPBIT_API_URL}/market/all?isDetails=false`)
+  // Direct call to Upbit for markets (no CORS issues with this endpoint usually)
+  const response = await fetch('https://api.upbit.com/v1/market/all?isDetails=false')
 
   if (!response.ok) {
     throw new Error('Failed to fetch markets')
