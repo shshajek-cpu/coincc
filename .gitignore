@@ -39,3 +39,18 @@ next-env.d.ts
 # Supabase
 supabase/.branches
 supabase/.temp
+
+# Agent and Tool configurations
+.agent/
+.claude/
+.omc/
+.mcp.json
+
+# Nested repositories/templates
+fullstack-starter/
+
+# Misc
+nul
+promo-video/
+docs/
+.vscode/

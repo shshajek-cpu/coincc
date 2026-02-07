@@ -57,6 +57,7 @@ import { createClient, isSupabaseConfigured } from '@/lib/supabase/client'
 import { uploadScreenshot, validateFile } from '@/lib/supabase/storage'
 import { useStore } from '@/stores/useStore'
 import { useToast } from '@/hooks/use-toast'
+import { useUpbit } from '@/hooks/useUpbit'
 import type { Trade, TradeType } from '@/types'
 
 const TradePairChart = dynamic(
@@ -128,6 +129,20 @@ export default function TradesPage() {
     memo: '',
   })
 
+  // Real-time price for selected coin
+  const selectedCoinSymbols = useMemo(() =>
+    formData.coin_symbol ? [formData.coin_symbol] : [],
+    [formData.coin_symbol]
+  )
+  const { getPrice, getChangeRate } = useUpbit({ symbols: selectedCoinSymbols, realtime: true })
+
+  // Current time state (updates every second)
+  const [currentTime, setCurrentTime] = useState(new Date())
+  useEffect(() => {
+    const timer = setInterval(() => setCurrentTime(new Date()), 1000)
+    return () => clearInterval(timer)
+  }, [])
+
   // Compute open buy trades for the selected coin when in SELL mode
   const openBuyTrades = useMemo(() => {
     if (formData.trade_type !== 'SELL' || !formData.coin_symbol) return []
@@ -145,10 +160,10 @@ export default function TradesPage() {
       .map(([coin]) => coin)
   }, [trades])
 
-  // Set default chart coin when trades load
+  // Set default chart coin
   useEffect(() => {
-    if (tradedCoins.length > 0 && !chartCoin) {
-      setChartCoin(tradedCoins[0])
+    if (!chartCoin) {
+      setChartCoin(tradedCoins.length > 0 ? tradedCoins[0] : 'BTC')
     }
   }, [tradedCoins, chartCoin])
 
@@ -564,6 +579,64 @@ export default function TradesPage() {
               </span>
             </div>
 
+            {/* Current Price Info Tooltip */}
+            {formData.coin_symbol && (
+              <div className="flex flex-wrap items-center gap-3 rounded-lg border border-border bg-muted/40 px-3 py-2 text-sm">
+                <div className="flex items-center gap-1.5 text-muted-foreground">
+                  <span className="font-medium">현재시간</span>
+                  <span className="font-number text-foreground">
+                    {currentTime.toLocaleString('ko-KR', {
+                      month: 'short',
+                      day: 'numeric',
+                      hour: '2-digit',
+                      minute: '2-digit',
+                      second: '2-digit',
+                    })}
+                  </span>
+                </div>
+                <div className="h-4 w-px bg-border" />
+                <div className="flex items-center gap-1.5 text-muted-foreground">
+                  <span className="font-medium">{formData.coin_symbol} 현재가</span>
+                  {(() => {
+                    const price = getPrice(formData.coin_symbol)
+                    const changeRate = getChangeRate(formData.coin_symbol)
+                    if (price === null) return <span className="text-xs">불러오는 중...</span>
+                    return (
+                      <>
+                        <span className="font-number font-semibold text-foreground">
+                          {formatKRW(price)}
+                        </span>
+                        {changeRate !== null && (
+                          <span className={cn(
+                            'font-number text-xs',
+                            changeRate >= 0 ? 'text-success' : 'text-danger'
+                          )}>
+                            ({changeRate >= 0 ? '+' : ''}{(changeRate * 100).toFixed(2)}%)
+                          </span>
+                        )}
+                        <button
+                          type="button"
+                          onClick={() => setFormData({ ...formData, price: String(price) })}
+                          className="ml-1 rounded px-1.5 py-0.5 text-xs font-medium text-primary hover:bg-primary/10 transition-colors"
+                        >
+                          적용
+                        </button>
+                      </>
+                    )
+                  })()}
+                </div>
+                {formData.memo && (
+                  <>
+                    <div className="h-4 w-px bg-border" />
+                    <div className="flex items-center gap-1.5 text-muted-foreground">
+                      <span className="font-medium">메모</span>
+                      <span className="text-foreground truncate max-w-[200px]">{formData.memo}</span>
+                    </div>
+                  </>
+                )}
+              </div>
+            )}
+
             {/* Open Buy Trade Selector - visible when SELL and coin selected */}
             {formData.trade_type === 'SELL' && formData.coin_symbol && (
               <div className="rounded-lg border border-border bg-muted/30 p-3">
@@ -816,39 +889,37 @@ export default function TradesPage() {
       </div>
 
       {/* Chart Section */}
-      {tradedCoins.length > 0 && (
-        <Card>
-          <CardHeader className="pb-3">
-            <div className="flex items-center justify-between">
-              <CardTitle className="flex items-center gap-2 text-lg">
-                <BarChart3 className="h-5 w-5" />
-                매매 차트
-              </CardTitle>
-              <Select value={chartCoin} onValueChange={setChartCoin}>
-                <SelectTrigger className="w-[140px]">
-                  <SelectValue placeholder="코인 선택" />
-                </SelectTrigger>
-                <SelectContent>
-                  {tradedCoins.map((coin) => (
-                    <SelectItem key={coin} value={coin}>
-                      {coin} ({getCoinName(coin)})
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
-          </CardHeader>
-          <CardContent className="pt-0">
-            {chartCoin && (
-              <TradePairChart
-                coinSymbol={chartCoin}
-                trades={chartTrades}
-                height={400}
-              />
-            )}
-          </CardContent>
-        </Card>
-      )}
+      <Card>
+        <CardHeader className="pb-3">
+          <div className="flex items-center justify-between">
+            <CardTitle className="flex items-center gap-2 text-lg">
+              <BarChart3 className="h-5 w-5" />
+              매매 차트
+            </CardTitle>
+            <Select value={chartCoin} onValueChange={setChartCoin}>
+              <SelectTrigger className="w-[140px]">
+                <SelectValue placeholder="코인 선택" />
+              </SelectTrigger>
+              <SelectContent>
+                {COINS.map((coin) => (
+                  <SelectItem key={coin} value={coin}>
+                    {coin} ({getCoinName(coin)})
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+        </CardHeader>
+        <CardContent className="pt-0">
+          {chartCoin && (
+            <TradePairChart
+              coinSymbol={chartCoin}
+              trades={chartTrades}
+              height={400}
+            />
+          )}
+        </CardContent>
+      </Card>
 
       {/* Filters */}
       <Card>
