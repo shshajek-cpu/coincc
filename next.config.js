@@ -1,34 +1,18 @@
 /** @type {import('next').NextConfig} */
 const nextConfig = {
-  images: {
-    remotePatterns: [
+  // Add headers to prevent caching of dynamic JS bundles
+  headers: async () => {
+    return [
       {
-        protocol: 'https',
-        hostname: 'lh3.googleusercontent.com',
+        source: '/api/:path*',
+        headers: [
+          {
+            key: 'Cache-Control',
+            value: 'no-cache, no-store, must-revalidate',
+          },
+        ],
       },
-      {
-        protocol: 'https',
-        hostname: 'k.kakaocdn.net',
-      },
-      {
-        protocol: 'https',
-        hostname: 'avatars.githubusercontent.com',
-      },
-      {
-        protocol: 'https',
-        hostname: '*.supabase.co',
-      },
-    ],
-  },
-  // Ensure static exports work properly with client components
-  reactStrictMode: true,
-  // Disable type checking during build (for faster builds)
-  typescript: {
-    ignoreBuildErrors: false,
-  },
-  // Disable eslint during build
-  eslint: {
-    ignoreDuringBuilds: true,
+    ]
   },
 }
 
