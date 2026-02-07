@@ -114,7 +114,7 @@ export function createUpbitWebSocket(
         signed_change_rate: data.signed_change_rate,
         signed_change_price: data.signed_change_price,
         acc_trade_price_24h: data.acc_trade_price_24h,
-        acc_trade_volume_24h: data.acc_trade_volume,
+        acc_trade_volume_24h: data.acc_trade_volume_24h,
         high_price: data.high_price,
         low_price: data.low_price,
         prev_closing_price: data.prev_closing_price,

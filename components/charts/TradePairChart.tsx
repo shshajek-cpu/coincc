@@ -352,8 +352,8 @@ export function TradePairChart({
                 if (trade.pnl_percentage !== null && trade.pnl_percentage !== undefined) {
                   const pnlSign = trade.pnl_percentage >= 0 ? '+' : ''
                   markerText = `매도 ${formatKRW(trade.price)}\n(${pnlSign}${trade.pnl_percentage.toFixed(2)}%)`
-                  // Brighter red color
-                  markerColor = trade.pnl_percentage >= 0 ? '#ef4444' : '#dc2626'
+                  // Green for profit, red for loss
+                  markerColor = trade.pnl_percentage >= 0 ? '#10b981' : '#ef4444'
                 } else {
                   markerText = `매도\n${formatKRW(trade.price)}`
                   markerColor = '#ef4444'
@@ -388,7 +388,7 @@ export function TradePairChart({
         // Add crosshair move handler for trade marker tooltips
         // Store unsubscribe function to prevent memory leak
         try {
-          chart.subscribeCrosshairMove((param: any) => {
+          crosshairUnsubscribe = chart.subscribeCrosshairMove((param: any) => {
             if (!param.time || !param.point) {
               setHoveredTrade(null)
               setTooltipPosition(null)
@@ -464,7 +464,7 @@ export function TradePairChart({
       chartDataRef.current = []
       lastCandleTimeRef.current = null
     }
-  }, [coinSymbol, trades, height, timeFrame, dateRangePreset, customStartDate, customEndDate, filterCandlesByDateRange, filterTradesByDateRange])
+  }, [coinSymbol, height, timeFrame, dateRangePreset, customStartDate, customEndDate])
 
   const chartHeight = height - 80
 

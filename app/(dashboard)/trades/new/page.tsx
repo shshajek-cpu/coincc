@@ -190,6 +190,9 @@ export default function NewTradePage() {
         emotion: formData.emotion,
         memo: formData.memo || null,
         screenshot_url: screenshotUrl,
+        paired_trade_id: null,
+        realized_pnl: null,
+        pnl_percentage: null,
       }
 
       if (isSupabaseConfigured()) {

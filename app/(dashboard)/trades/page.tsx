@@ -94,11 +94,12 @@ const EMOTIONS = [
 
 export default function TradesPage() {
   const { toast } = useToast()
-  const { trades, setTrades, deleteTrade, addTrade, getOpenBuyTrades } = useStore()
+  const { trades, setTrades, deleteTrade, addTrade, getOpenBuyTrades, tradeFilter, setTradeFilter } = useStore()
   const [loading, setLoading] = useState(true)
   const [filter, setFilter] = useState<'all' | TradeType>('all')
   const [search, setSearch] = useState('')
-  const [exchange, setExchange] = useState<string>('all')
+  // Use store for exchange filter to persist across sessions
+  const exchange = tradeFilter.exchange || 'all'
   const [viewMode, setViewMode] = useState<'list' | 'gallery'>('list')
   const [selectedTrade, setSelectedTrade] = useState<Trade | null>(null)
 
@@ -134,7 +135,7 @@ export default function TradesPage() {
     formData.coin_symbol ? [formData.coin_symbol] : [],
     [formData.coin_symbol]
   )
-  const { getPrice, getChangeRate } = useUpbit({ symbols: selectedCoinSymbols, realtime: false })
+  const { getPrice, getChangeRate } = useUpbit({ symbols: selectedCoinSymbols, realtime: true })
 
   // Current time state (updates every second)
   const [currentTime, setCurrentTime] = useState(new Date())
@@ -271,6 +272,7 @@ export default function TradesPage() {
   }
 
   const handleRemoveScreenshot = () => {
+    // Clear screenshot state and reset file input
     setScreenshotUrl(null)
     setScreenshotPreview(null)
     if (fileInputRef.current) {
@@ -347,7 +349,7 @@ export default function TradesPage() {
         const buyTrade = openBuyTrades.find((t) => t.id === selectedBuyTradeId)
         if (buyTrade) {
           paired_trade_id = buyTrade.id
-          realized_pnl = (price - buyTrade.price) * quantity
+          realized_pnl = (price - buyTrade.price) * quantity - (buyTrade.fee + fee)
           pnl_percentage = ((price - buyTrade.price) / buyTrade.price) * 100
         }
       }
@@ -672,7 +674,7 @@ export default function TradesPage() {
                     const buyTrade = openBuyTrades.find((t) => t.id === selectedBuyTradeId)
                     if (!buyTrade) return null
                     const sellPrice = Number(formData.price)
-                    const qty = Number(formData.quantity) || buyTrade.quantity
+                    const qty = Number(formData.quantity)
                     const pnl = (sellPrice - buyTrade.price) * qty
                     const pnlPct = ((sellPrice - buyTrade.price) / buyTrade.price) * 100
                     const { pnlText, pctText, isProfit } = formatPnl(pnl, pnlPct)
@@ -943,7 +945,10 @@ export default function TradesPage() {
                   className="pl-9"
                 />
               </div>
-              <Select value={exchange} onValueChange={setExchange}>
+              <Select
+                value={exchange}
+                onValueChange={(v) => setTradeFilter({ ...tradeFilter, exchange: v })}
+              >
                 <SelectTrigger className="w-32">
                   <SelectValue placeholder="거래소" />
                 </SelectTrigger>

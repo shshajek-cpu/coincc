@@ -41,6 +41,7 @@ export async function GET(request: NextRequest) {
         'Accept': 'application/json',
       },
       next: { revalidate: 0 }, // Disable caching for real-time data
+      cache: 'no-store', // Explicitly disable caching
     })
 
     if (!response.ok) {
@@ -48,7 +49,19 @@ export async function GET(request: NextRequest) {
     }
 
     const data = await response.json()
-    return NextResponse.json(data)
+
+    // Add explicit cache-control headers to response
+    const responseHeaders = new Headers({
+      'Cache-Control': 'no-cache, no-store, must-revalidate, max-age=0, private',
+      'Pragma': 'no-cache',
+      'Expires': '0',
+      'Content-Type': 'application/json',
+    })
+
+    return new NextResponse(JSON.stringify(data), {
+      status: 200,
+      headers: responseHeaders,
+    })
   } catch (error) {
     console.error('Upbit API error:', error)
     return NextResponse.json(

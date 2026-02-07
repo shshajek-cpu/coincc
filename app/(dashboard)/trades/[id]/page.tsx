@@ -148,9 +148,13 @@ export default function EditTradePage() {
   }
 
   const handleRemoveScreenshot = async () => {
-    // Delete old screenshot if it exists and is from storage
-    if (screenshotUrl && screenshotUrl.includes('screenshots')) {
-      await deleteScreenshot(screenshotUrl)
+    // Delete old screenshot if it exists and is from storage (not a data URL)
+    if (screenshotUrl && !screenshotUrl.startsWith('data:')) {
+      try {
+        await deleteScreenshot(screenshotUrl)
+      } catch (error) {
+        console.error('Failed to delete screenshot:', error)
+      }
     }
     setScreenshotUrl(null)
     setScreenshotPreview(null)
@@ -238,9 +242,13 @@ export default function EditTradePage() {
       const fee = Number(formData.fee) || 0
       const total_amount = quantity * price
 
-      // Delete old screenshot if changed
-      if (originalScreenshotUrl && originalScreenshotUrl !== screenshotUrl) {
-        await deleteScreenshot(originalScreenshotUrl)
+      // Delete old screenshot if changed and it's not a data URL
+      if (originalScreenshotUrl && originalScreenshotUrl !== screenshotUrl && !originalScreenshotUrl.startsWith('data:')) {
+        try {
+          await deleteScreenshot(originalScreenshotUrl)
+        } catch (error) {
+          console.error('Failed to delete old screenshot:', error)
+        }
       }
 
       const tradeData = {
