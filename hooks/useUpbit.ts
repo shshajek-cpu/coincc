@@ -16,8 +16,8 @@ interface UseUpbitOptions {
 
 export function useUpbit({
   symbols,
-  realtime = true,
-  interval = 10000,
+  realtime = false,
+  interval = 30000,
 }: UseUpbitOptions) {
   const [prices, setPrices] = useState<Record<string, UpbitTicker>>({})
   const [loading, setLoading] = useState(true)
