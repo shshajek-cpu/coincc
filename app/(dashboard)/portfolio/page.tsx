@@ -98,7 +98,7 @@ export default function PortfolioPage() {
     refresh: refreshPrices,
   } = useUpbit({
     symbols,
-    realtime: true,
+    realtime: false,
   })
 
   // Fetch holdings from Supabase

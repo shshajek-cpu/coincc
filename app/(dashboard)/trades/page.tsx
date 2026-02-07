@@ -134,7 +134,7 @@ export default function TradesPage() {
     formData.coin_symbol ? [formData.coin_symbol] : [],
     [formData.coin_symbol]
   )
-  const { getPrice, getChangeRate } = useUpbit({ symbols: selectedCoinSymbols, realtime: true })
+  const { getPrice, getChangeRate } = useUpbit({ symbols: selectedCoinSymbols, realtime: false })
 
   // Current time state (updates every second)
   const [currentTime, setCurrentTime] = useState(new Date())
