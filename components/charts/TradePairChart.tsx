@@ -61,7 +61,7 @@ export function TradePairChart({
   // Real-time price updates
   const { prices, getPrice } = useUpbit({
     symbols: [coinSymbol],
-    realtime: true,
+    realtime: false,
   })
 
   // Calculate date range based on preset or custom selection
@@ -387,34 +387,38 @@ export function TradePairChart({
 
         // Add crosshair move handler for trade marker tooltips
         // Store unsubscribe function to prevent memory leak
-        crosshairUnsubscribe = chart.subscribeCrosshairMove((param) => {
-          if (!param.time || !param.point) {
-            setHoveredTrade(null)
-            setTooltipPosition(null)
-            return
-          }
-
-          // Find trade at current time
-          const hoveredTime = param.time
-          const trade = filteredTrades.find(t => {
-            const tradeDate = new Date(t.trade_at)
-            let tradeTime: string | number
-            if (timeFrame === 'D') {
-              tradeTime = tradeDate.toISOString().split('T')[0]
-            } else {
-              tradeTime = Math.floor(tradeDate.getTime() / 1000)
+        try {
+          chart.subscribeCrosshairMove((param: any) => {
+            if (!param.time || !param.point) {
+              setHoveredTrade(null)
+              setTooltipPosition(null)
+              return
             }
-            return tradeTime === hoveredTime
-          })
 
-          if (trade && param.point) {
-            setHoveredTrade(trade)
-            setTooltipPosition({ x: param.point.x, y: param.point.y })
-          } else {
-            setHoveredTrade(null)
-            setTooltipPosition(null)
-          }
-        })
+            // Find trade at current time
+            const hoveredTime = param.time
+            const trade = filteredTrades.find(t => {
+              const tradeDate = new Date(t.trade_at)
+              let tradeTime: string | number
+              if (timeFrame === 'D') {
+                tradeTime = tradeDate.toISOString().split('T')[0]
+              } else {
+                tradeTime = Math.floor(tradeDate.getTime() / 1000)
+              }
+              return tradeTime === hoveredTime
+            })
+
+            if (trade && param.point) {
+              setHoveredTrade(trade)
+              setTooltipPosition({ x: param.point.x, y: param.point.y })
+            } else {
+              setHoveredTrade(null)
+              setTooltipPosition(null)
+            }
+          })
+        } catch (e) {
+          console.error('Failed to subscribe to crosshair move:', e)
+        }
 
         chart.timeScale().fitContent()
         setLoading(false)
