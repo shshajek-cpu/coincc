@@ -42,7 +42,7 @@ export function TradePairChart({
 }: TradePairChartProps) {
   const chartContainerRef = useRef<HTMLDivElement>(null)
   const chartRef = useRef<ReturnType<typeof createChart> | null>(null)
-  const candleSeriesRef = useRef<ReturnType<typeof CandlestickSeries> | null>(null)
+  const candleSeriesRef = useRef<any>(null)
   const resizeListenerRef = useRef<(() => void) | null>(null)
   const chartDataRef = useRef<any[]>([])
   const lastCandleTimeRef = useRef<string | number | null>(null)
