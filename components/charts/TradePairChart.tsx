@@ -1,7 +1,7 @@
 'use client'
 
 import { useEffect, useRef, useState, useCallback, useMemo } from 'react'
-import { createChart, ColorType, CandlestickSeries, createSeriesMarkers } from 'lightweight-charts'
+import { createChart, ColorType, CandlestickSeries } from 'lightweight-charts'
 import type { Trade, UpbitCandle } from '@/types'
 import { getDailyCandles, getMinuteCandles } from '@/lib/upbit/api'
 import { formatKRW, cn } from '@/lib/utils'
