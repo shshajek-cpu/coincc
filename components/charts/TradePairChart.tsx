@@ -163,7 +163,7 @@ export function TradePairChart({
 
   // Update trade tooltips based on chart coordinates
   const updateTradeTooltips = useCallback(() => {
-    if (!chartRef.current || !candleSeriesRef.current) {
+    if (!chartRef.current || !candleSeriesRef.current || !chartContainerRef.current) {
       setTradeTooltips([])
       return
     }
@@ -182,19 +182,25 @@ export function TradePairChart({
           time = Math.floor(tradeDate.getTime() / 1000)
         }
 
-        // Get coordinate from price
-        const coordinate = candleSeriesRef.current.priceToCoordinate(trade.price)
+        // Get coordinate from price - using the series method
+        const priceCoordinate = candleSeriesRef.current.priceToCoordinate(trade.price)
         const timeCoordinate = chartRef.current?.timeScale().timeToCoordinate(time)
 
-        if (coordinate !== null && timeCoordinate !== null && timeCoordinate !== undefined) {
+        // Ensure both coordinates are valid numbers
+        if (
+          typeof priceCoordinate === 'number' &&
+          !isNaN(priceCoordinate) &&
+          typeof timeCoordinate === 'number' &&
+          !isNaN(timeCoordinate)
+        ) {
           newTooltips.push({
             trade,
             x: timeCoordinate,
-            y: coordinate,
+            y: priceCoordinate,
           })
         }
       } catch (e) {
-        // Ignore coordinate conversion errors
+        console.warn('Coordinate conversion error for trade:', trade.id, e)
       }
     })
 
@@ -529,8 +535,9 @@ export function TradePairChart({
             chartRef.current.applyOptions({
               width: chartContainerRef.current.clientWidth,
             })
-            // Recalculate tooltip positions on resize
-            setTimeout(() => updateTradeTooltips(), 100)
+            chartRef.current.timeScale().fitContent()
+            // Recalculate tooltip positions on resize with slight delay
+            setTimeout(() => updateTradeTooltips(), 150)
           }
         }
 
@@ -538,10 +545,13 @@ export function TradePairChart({
         resizeListenerRef.current = handleResize
 
         // Subscribe to visible range changes to update tooltips on zoom/pan
-        chart.timeScale().subscribeVisibleTimeRangeChange(() => {
-          updateTradeTooltips()
-        })
-        visibleRangeUnsubscribe = () => {} // Placeholder as subscribeVisibleTimeRangeChange doesn't return unsubscribe
+        const visibleRangeHandler = () => {
+          setTimeout(() => updateTradeTooltips(), 50)
+        }
+        chart.timeScale().subscribeVisibleTimeRangeChange(visibleRangeHandler)
+        visibleRangeUnsubscribe = () => {
+          chart.timeScale().unsubscribeVisibleTimeRangeChange(visibleRangeHandler)
+        }
       } catch (err) {
         if (abortController.signal.aborted) return
         console.error('Chart error:', err)
@@ -584,7 +594,7 @@ export function TradePairChart({
       lastCandleTimeRef.current = null
       setTradeTooltips([])
     }
-  }, [coinSymbol, height, timeFrame, dateRangePreset, customStartDate, customEndDate, updateTradeTooltips, tradesByTime])
+  }, [coinSymbol, height, timeFrame, dateRangePreset, customStartDate, customEndDate, updateTradeTooltips, tradesByTime, filterCandlesByDateRange, filterTradesByDateRange, trades])
 
   const chartHeight = height - 80
 
@@ -717,43 +727,47 @@ export function TradePairChart({
         <div ref={chartContainerRef} className="w-full" style={{ height: chartHeight }} />
 
         {/* Always-visible trade tooltips */}
-        {tradeTooltips.map((tooltip, index) => (
+        {tradeTooltips.map((tooltip) => (
           <div
             key={tooltip.trade.id}
-            className="absolute z-50 pointer-events-none"
+            className="absolute pointer-events-none"
             style={{
               left: `${tooltip.x}px`,
-              top: `${tooltip.y - 60}px`,
+              top: `${tooltip.y}px`,
               transform: 'translate(-50%, -100%)',
+              zIndex: 40,
+              display: 'block',
+              visibility: 'visible',
             }}
           >
-            <div className="bg-slate-900/95 backdrop-blur-sm border border-slate-700 rounded-md shadow-lg p-2 text-xs text-white whitespace-nowrap">
+            <div className="bg-slate-900/95 backdrop-blur-sm border border-slate-700 rounded-md shadow-lg p-2 text-xs text-white whitespace-nowrap mb-1">
               <div className={cn(
                 'font-semibold',
                 tooltip.trade.trade_type === 'BUY' ? 'text-blue-400' : 'text-red-400'
               )}>
-                {tooltip.trade.trade_type} | {new Date(tooltip.trade.trade_at).toLocaleString('ko-KR', {
-                  year: 'numeric',
-                  month: '2-digit',
-                  day: '2-digit',
-                  hour: '2-digit',
-                  minute: '2-digit',
-                  second: '2-digit',
-                })}
+                {tooltip.trade.trade_type}
               </div>
-              <div className="mt-1 space-y-0.5">
-                <div>
-                  {tooltip.trade.trade_type === 'BUY' ? '매수가' : '매도가'}: {formatKRW(tooltip.trade.price)}
+              <div className="mt-0.5 space-y-0.5">
+                <div className="text-[10px] text-gray-400">
+                  {new Date(tooltip.trade.trade_at).toLocaleString('ko-KR', {
+                    month: '2-digit',
+                    day: '2-digit',
+                    hour: '2-digit',
+                    minute: '2-digit',
+                  })}
                 </div>
-                <div>
-                  수량: {tooltip.trade.quantity.toFixed(8)} {tooltip.trade.coin_symbol}
+                <div className="font-medium">
+                  {formatKRW(tooltip.trade.price)}
                 </div>
-                {tooltip.trade.trade_type === 'SELL' && tooltip.trade.realized_pnl !== null && tooltip.trade.pnl_percentage !== null && (
+                <div className="text-[10px] text-gray-400">
+                  {tooltip.trade.quantity.toFixed(4)}
+                </div>
+                {tooltip.trade.trade_type === 'SELL' && tooltip.trade.pnl_percentage !== null && (
                   <div className={cn(
-                    'font-semibold',
-                    tooltip.trade.realized_pnl >= 0 ? 'text-green-400' : 'text-red-400'
+                    'text-[10px] font-semibold',
+                    tooltip.trade.pnl_percentage >= 0 ? 'text-green-400' : 'text-red-400'
                   )}>
-                    손익: {tooltip.trade.realized_pnl >= 0 ? '+' : ''}{formatKRW(tooltip.trade.realized_pnl)} ({tooltip.trade.pnl_percentage >= 0 ? '+' : ''}{tooltip.trade.pnl_percentage.toFixed(2)}%)
+                    {tooltip.trade.pnl_percentage >= 0 ? '+' : ''}{tooltip.trade.pnl_percentage.toFixed(2)}%
                   </div>
                 )}
               </div>
