@@ -188,8 +188,10 @@ export function TradePairChart({
 
         // Ensure both coordinates are valid numbers
         if (
+          priceCoordinate !== null &&
           typeof priceCoordinate === 'number' &&
           !isNaN(priceCoordinate) &&
+          timeCoordinate !== null &&
           typeof timeCoordinate === 'number' &&
           !isNaN(timeCoordinate)
         ) {
@@ -404,14 +406,7 @@ export function TradePairChart({
         // Filter trades by date range
         const filteredTrades = filterTradesByDateRange(trades)
 
-        // Clear previous price lines
-        priceLinesRef.current.forEach(line => {
-          try {
-            candleSeries.removePriceLine(line)
-          } catch (e) {
-            // Ignore errors
-          }
-        })
+        // Clear previous price lines (auto-cleanup when series is removed)
         priceLinesRef.current = []
 
         // Add price lines for each trade
@@ -514,6 +509,11 @@ export function TradePairChart({
             }
           }
 
+          // Clear previous subscription to prevent memory leak
+          if (crosshairUnsubscribeRef.current) {
+            crosshairUnsubscribeRef.current()
+          }
+
           chart.subscribeCrosshairMove(crosshairHandler)
 
           // Store unsubscribe function
@@ -527,8 +527,10 @@ export function TradePairChart({
         chart.timeScale().fitContent()
         setLoading(false)
 
-        // Initial tooltip positions
-        setTimeout(() => updateTradeTooltips(), 100)
+        // Initial tooltip positions - wait for layout stabilization
+        requestAnimationFrame(() => {
+          updateTradeTooltips()
+        })
 
         const handleResize = () => {
           if (chartContainerRef.current && chartRef.current) {
