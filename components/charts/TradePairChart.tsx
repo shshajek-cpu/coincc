@@ -479,11 +479,8 @@ export function TradePairChart({
               return (a.time as number) - (b.time as number)
             })
 
-          try {
-            createSeriesMarkers(candleSeries, markers as any)
-          } catch {
-            // Markers might fail if trade dates are outside candle range
-          }
+          // Markers are added via candleSeries.setMarkers() above
+          // No additional marker creation needed
         }
 
         // Add crosshair move handler for trade marker tooltips
