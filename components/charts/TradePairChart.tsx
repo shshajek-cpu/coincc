@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useRef, useState, useCallback } from 'react'
+import { useEffect, useRef, useState, useCallback, useMemo } from 'react'
 import { createChart, ColorType, CandlestickSeries, createSeriesMarkers } from 'lightweight-charts'
 import type { Trade, UpbitCandle } from '@/types'
 import { getDailyCandles, getMinuteCandles } from '@/lib/upbit/api'
@@ -46,12 +46,20 @@ export function TradePairChart({
   const resizeListenerRef = useRef<(() => void) | null>(null)
   const chartDataRef = useRef<any[]>([])
   const lastCandleTimeRef = useRef<string | number | null>(null)
+  const priceLinesRef = useRef<any[]>([])
+  const crosshairUnsubscribeRef = useRef<(() => void) | null>(null)
 
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [timeFrame, setTimeFrame] = useState<TimeFrame>('D')
   const [hoveredTrade, setHoveredTrade] = useState<Trade | null>(null)
   const [tooltipPosition, setTooltipPosition] = useState<{ x: number; y: number } | null>(null)
+  const [tradeTooltips, setTradeTooltips] = useState<Array<{
+    trade: Trade
+    x: number
+    y: number
+  }>>([])
+
 
   // Date range filtering state
   const [dateRangePreset, setDateRangePreset] = useState<DateRangePreset>('all')
@@ -127,6 +135,71 @@ export function TradePairChart({
       return true
     })
   }, [getDateRange])
+
+  // Create a Map for O(1) trade lookup by timestamp
+  const tradesByTime = useMemo(() => {
+    const map = new Map<string | number, Trade>()
+    filterTradesByDateRange(trades).forEach(t => {
+      const tradeDate = new Date(t.trade_at)
+      const time = timeFrame === 'D'
+        ? tradeDate.toISOString().split('T')[0]
+        : Math.floor(tradeDate.getTime() / 1000)
+      map.set(time, t)
+    })
+    return map
+  }, [trades, timeFrame, filterTradesByDateRange])
+
+  // Tooltip position calculation with boundary detection
+  const getTooltipStyle = useCallback((x: number, y: number) => {
+    const maxX = window.innerWidth - 300
+    const adjustedX = Math.min(x, maxX)
+    const adjustedY = y > 200 ? y - 10 : y + 10
+    return {
+      left: `${adjustedX}px`,
+      top: `${adjustedY}px`,
+      transform: y > 200 ? 'translateY(-100%)' : 'translateY(0)',
+    }
+  }, [])
+
+  // Update trade tooltips based on chart coordinates
+  const updateTradeTooltips = useCallback(() => {
+    if (!chartRef.current || !candleSeriesRef.current) {
+      setTradeTooltips([])
+      return
+    }
+
+    const filteredTrades = filterTradesByDateRange(trades)
+    const newTooltips: Array<{ trade: Trade; x: number; y: number }> = []
+
+    filteredTrades.forEach(trade => {
+      try {
+        const tradeDate = new Date(trade.trade_at)
+        let time: any
+
+        if (timeFrame === 'D') {
+          time = tradeDate.toISOString().split('T')[0]
+        } else {
+          time = Math.floor(tradeDate.getTime() / 1000)
+        }
+
+        // Get coordinate from price
+        const coordinate = candleSeriesRef.current.priceToCoordinate(trade.price)
+        const timeCoordinate = chartRef.current?.timeScale().timeToCoordinate(time)
+
+        if (coordinate !== null && timeCoordinate !== null && timeCoordinate !== undefined) {
+          newTooltips.push({
+            trade,
+            x: timeCoordinate,
+            y: coordinate,
+          })
+        }
+      } catch (e) {
+        // Ignore coordinate conversion errors
+      }
+    })
+
+    setTradeTooltips(newTooltips)
+  }, [trades, timeFrame, filterTradesByDateRange])
 
   // Function to get current candle time based on timeframe
   const getCurrentCandleTime = useCallback(() => {
@@ -209,7 +282,7 @@ export function TradePairChart({
     if (!chartContainerRef.current) return
 
     const abortController = new AbortController()
-    let crosshairUnsubscribe: (() => void) | null = null
+    let visibleRangeUnsubscribe: (() => void) | null = null
 
     // Clean up previous chart and resize listener
     if (chartRef.current) {
@@ -293,7 +366,7 @@ export function TradePairChart({
           priceLineVisible: false,
         })
 
-        // Convert candles - format depends on timeframe
+        // Convert candles - format depends on timeframe (reverse in place for efficiency)
         const chartData = filteredCandles
           .map((candle: UpbitCandle) => {
             if (timeFrame === 'D') {
@@ -315,7 +388,7 @@ export function TradePairChart({
               }
             }
           })
-          .reverse()
+        chartData.reverse()
 
         candleSeries.setData(chartData as any)
         candleSeriesRef.current = candleSeries
@@ -324,6 +397,33 @@ export function TradePairChart({
 
         // Filter trades by date range
         const filteredTrades = filterTradesByDateRange(trades)
+
+        // Clear previous price lines
+        priceLinesRef.current.forEach(line => {
+          try {
+            candleSeries.removePriceLine(line)
+          } catch (e) {
+            // Ignore errors
+          }
+        })
+        priceLinesRef.current = []
+
+        // Add price lines for each trade
+        filteredTrades.forEach(trade => {
+          try {
+            const priceLine = candleSeries.createPriceLine({
+              price: trade.price,
+              color: trade.trade_type === 'BUY' ? '#3b82f6' : '#ef4444',
+              lineWidth: 1,
+              lineStyle: 0, // solid
+              axisLabelVisible: false,
+              title: '',
+            })
+            priceLinesRef.current.push(priceLine)
+          } catch (e) {
+            // Ignore price line creation errors
+          }
+        })
 
         // Add enhanced trade markers with profit/loss information
         if (filteredTrades.length > 0) {
@@ -388,25 +488,16 @@ export function TradePairChart({
         // Add crosshair move handler for trade marker tooltips
         // Store unsubscribe function to prevent memory leak
         try {
-          crosshairUnsubscribe = chart.subscribeCrosshairMove((param: any) => {
+          const crosshairHandler = (param: any) => {
             if (!param.time || !param.point) {
               setHoveredTrade(null)
               setTooltipPosition(null)
               return
             }
 
-            // Find trade at current time
+            // Use Map for O(1) lookup instead of O(n) find
             const hoveredTime = param.time
-            const trade = filteredTrades.find(t => {
-              const tradeDate = new Date(t.trade_at)
-              let tradeTime: string | number
-              if (timeFrame === 'D') {
-                tradeTime = tradeDate.toISOString().split('T')[0]
-              } else {
-                tradeTime = Math.floor(tradeDate.getTime() / 1000)
-              }
-              return tradeTime === hoveredTime
-            })
+            const trade = tradesByTime.get(hoveredTime)
 
             if (trade && param.point) {
               setHoveredTrade(trade)
@@ -415,7 +506,14 @@ export function TradePairChart({
               setHoveredTrade(null)
               setTooltipPosition(null)
             }
-          })
+          }
+
+          chart.subscribeCrosshairMove(crosshairHandler)
+
+          // Store unsubscribe function
+          crosshairUnsubscribeRef.current = () => {
+            chart.unsubscribeCrosshairMove(crosshairHandler)
+          }
         } catch (e) {
           console.error('Failed to subscribe to crosshair move:', e)
         }
@@ -423,16 +521,27 @@ export function TradePairChart({
         chart.timeScale().fitContent()
         setLoading(false)
 
+        // Initial tooltip positions
+        setTimeout(() => updateTradeTooltips(), 100)
+
         const handleResize = () => {
           if (chartContainerRef.current && chartRef.current) {
             chartRef.current.applyOptions({
               width: chartContainerRef.current.clientWidth,
             })
+            // Recalculate tooltip positions on resize
+            setTimeout(() => updateTradeTooltips(), 100)
           }
         }
 
         window.addEventListener('resize', handleResize)
         resizeListenerRef.current = handleResize
+
+        // Subscribe to visible range changes to update tooltips on zoom/pan
+        chart.timeScale().subscribeVisibleTimeRangeChange(() => {
+          updateTradeTooltips()
+        })
+        visibleRangeUnsubscribe = () => {} // Placeholder as subscribeVisibleTimeRangeChange doesn't return unsubscribe
       } catch (err) {
         if (abortController.signal.aborted) return
         console.error('Chart error:', err)
@@ -447,15 +556,25 @@ export function TradePairChart({
       abortController.abort()
 
       // Unsubscribe from crosshair events to prevent memory leak
-      if (crosshairUnsubscribe) {
-        crosshairUnsubscribe()
-        crosshairUnsubscribe = null
+      if (crosshairUnsubscribeRef.current) {
+        crosshairUnsubscribeRef.current()
+        crosshairUnsubscribeRef.current = null
+      }
+
+      // Unsubscribe from visible range changes
+      if (visibleRangeUnsubscribe) {
+        visibleRangeUnsubscribe()
+        visibleRangeUnsubscribe = null
       }
 
       if (resizeListenerRef.current) {
         window.removeEventListener('resize', resizeListenerRef.current)
         resizeListenerRef.current = null
       }
+
+      // Clear price lines
+      priceLinesRef.current = []
+
       if (chartRef.current) {
         chartRef.current.remove()
         chartRef.current = null
@@ -463,8 +582,9 @@ export function TradePairChart({
       candleSeriesRef.current = null
       chartDataRef.current = []
       lastCandleTimeRef.current = null
+      setTradeTooltips([])
     }
-  }, [coinSymbol, height, timeFrame, dateRangePreset, customStartDate, customEndDate])
+  }, [coinSymbol, height, timeFrame, dateRangePreset, customStartDate, customEndDate, updateTradeTooltips, tradesByTime])
 
   const chartHeight = height - 80
 
@@ -557,8 +677,14 @@ export function TradePairChart({
         {trades.length > 0 && (
           <div className="absolute top-2 left-2 z-10 bg-gray-900/90 backdrop-blur-sm border border-gray-700 rounded-lg px-3 py-2 text-xs space-y-1">
             {(() => {
-              const lastBuy = [...trades].reverse().find(t => t.trade_type === 'BUY')
-              const lastSell = [...trades].reverse().find(t => t.trade_type === 'SELL')
+              // Find last trades by iterating backwards (more efficient than reverse + find)
+              let lastBuy: Trade | undefined
+              let lastSell: Trade | undefined
+              for (let i = trades.length - 1; i >= 0; i--) {
+                if (!lastBuy && trades[i].trade_type === 'BUY') lastBuy = trades[i]
+                if (!lastSell && trades[i].trade_type === 'SELL') lastSell = trades[i]
+                if (lastBuy && lastSell) break
+              }
 
               return (
                 <>
@@ -590,15 +716,56 @@ export function TradePairChart({
 
         <div ref={chartContainerRef} className="w-full" style={{ height: chartHeight }} />
 
+        {/* Always-visible trade tooltips */}
+        {tradeTooltips.map((tooltip, index) => (
+          <div
+            key={tooltip.trade.id}
+            className="absolute z-50 pointer-events-none"
+            style={{
+              left: `${tooltip.x}px`,
+              top: `${tooltip.y - 60}px`,
+              transform: 'translate(-50%, -100%)',
+            }}
+          >
+            <div className="bg-slate-900/95 backdrop-blur-sm border border-slate-700 rounded-md shadow-lg p-2 text-xs text-white whitespace-nowrap">
+              <div className={cn(
+                'font-semibold',
+                tooltip.trade.trade_type === 'BUY' ? 'text-blue-400' : 'text-red-400'
+              )}>
+                {tooltip.trade.trade_type} | {new Date(tooltip.trade.trade_at).toLocaleString('ko-KR', {
+                  year: 'numeric',
+                  month: '2-digit',
+                  day: '2-digit',
+                  hour: '2-digit',
+                  minute: '2-digit',
+                  second: '2-digit',
+                })}
+              </div>
+              <div className="mt-1 space-y-0.5">
+                <div>
+                  {tooltip.trade.trade_type === 'BUY' ? '매수가' : '매도가'}: {formatKRW(tooltip.trade.price)}
+                </div>
+                <div>
+                  수량: {tooltip.trade.quantity.toFixed(8)} {tooltip.trade.coin_symbol}
+                </div>
+                {tooltip.trade.trade_type === 'SELL' && tooltip.trade.realized_pnl !== null && tooltip.trade.pnl_percentage !== null && (
+                  <div className={cn(
+                    'font-semibold',
+                    tooltip.trade.realized_pnl >= 0 ? 'text-green-400' : 'text-red-400'
+                  )}>
+                    손익: {tooltip.trade.realized_pnl >= 0 ? '+' : ''}{formatKRW(tooltip.trade.realized_pnl)} ({tooltip.trade.pnl_percentage >= 0 ? '+' : ''}{tooltip.trade.pnl_percentage.toFixed(2)}%)
+                  </div>
+                )}
+              </div>
+            </div>
+          </div>
+        ))}
+
         {/* Trade marker tooltip - Enhanced with larger fonts */}
         {hoveredTrade && tooltipPosition && (
           <div
             className="absolute z-50 pointer-events-none"
-            style={{
-              left: `${tooltipPosition.x + 10}px`,
-              top: `${tooltipPosition.y - 10}px`,
-              transform: 'translateY(-100%)',
-            }}
+            style={getTooltipStyle(tooltipPosition.x + 10, tooltipPosition.y)}
           >
             <div className="bg-gray-900/98 backdrop-blur-md border-2 border-gray-600 rounded-lg shadow-2xl p-4 min-w-[280px]">
               <div className="flex items-center justify-between mb-3 pb-2 border-b-2 border-gray-600">
